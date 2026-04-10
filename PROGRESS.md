@@ -5,10 +5,13 @@
 ## Project Overview
 
 - **Goal**: SO-ARM-101 로봇의 디지털 트윈 구축. 실물 로봇의 관절 상태를 Unreal에 실시간 반영하고, Unreal에서 계획한 동작을 실물 로봇에 전달.
-- **Hardware**: SO-ARM-101 (6x Feetech STS3215 servos, Waveshare/Feetech 계열 bus servo driver)
+- **Hardware**: SO-ARM-101 (Leader arm + Follower arm, 각 6x Feetech STS3215 servos, Waveshare bus servo driver board)
+  - **Follower**: STS3215 **12V** 모터 x6 + Waveshare 보드 + **12V** 어댑터
+  - **Leader**: STS3215 **7.4V** 모터 x6 + Waveshare 보드 + **5V** 어댑터
 - **Software stack**:
   - Windows 11 + Unreal Engine 5.4.4 (C++ 프로젝트 `SO101_Twin`)
   - WSL2 (Ubuntu 22.04) + ROS2 Humble
+  - WSL2 (Ubuntu 22.04) + conda env `lerobot` (Python 3.12) + LeRobot editable install
   - 통신: rosbridge_suite (WebSocket, port 9090)
 - **Project root**: `C:\UnrealProjects\UnrealRobotics-SO101\`
 - **Related docs**:
@@ -107,39 +110,87 @@ sudo apt install -y ros-humble-rosbridge-suite
 
 # Phase 2 — Hardware Verification (현재 단계) 🔄
 
-## ⏳ 2.1 STS3215 모터 개별 검증 (🔄 NEXT)
-로봇 조립 전에 모터가 정상인지 확인. 불량 모터를 조립 후 발견하면 분해가 필요하므로 먼저 해야 함.
+## ✅ 2.1 STS3215 모터 개별 검증 및 세팅
 
-### 정성적 체크
-- [ ] 드라이버 보드에 12V 공급 시 전원 LED 점등
-- [ ] 서보에 전원 인가 시 홀딩 사운드 ("틱" 소리와 축 경직)
-- [ ] 전원 OFF 상태에서 축을 수동 회전 — 부드럽고 일정한 저항 (걸림/모래감 없어야 함)
-- [ ] 전원 ON 상태에서 축이 손힘에 저항 — 정상 홀딩 토크 확인
+### Hardware 구성 확정
+- **Follower**: Waveshare bus servo driver + 12V 어댑터 + STS3215 12V 모터 x6
+- **Leader**: Waveshare bus servo driver + 5V 어댑터 + STS3215 7.4V 모터 x6
+- 양쪽 Waveshare 보드 모두 점퍼 2개를 **B 채널(USB)**에 설정
+- ⚠️ **전원/모터 교차 연결 절대 금지** — 7.4V 모터에 12V 어댑터를 잘못 연결하면 모터 손상 위험
 
-### 소프트웨어 통신 검증
-- [ ] `usbipd-win` 설치 및 WSL2 USB 포워딩 설정
-- [ ] WSL2에서 `/dev/ttyUSB0` 또는 `/dev/ttyACM0`으로 드라이버 인식
-- [ ] Python `feetech-servo-sdk`로 각 모터 ID 1개씩 응답 확인 (Present Position 읽기)
-- [ ] 통신 baudrate 확인 (기본 1,000,000)
+### WSL2 USB 포워딩 셋업
+- `usbipd-win`으로 Waveshare 보드를 WSL2에 포워딩
+- PowerShell 프로필에 헬퍼 함수 등록: `Attach-Follower`, `Attach-Leader`, `Attach-Both`
+  - BUSID 기반 단순 버전 (`$PROFILE`에 저장됨)
+  - 현재 USB 포트 기준: Follower=`1-7`, Leader=`3-2`
+- ⚠️ WSL 재시작/셧다운 후 usbipd attach 풀림 → 헬퍼 함수로 재연결
 
-### 모터 ID 설정
-- [ ] 6개 모터에 ID 1~6 순차 할당
-- [ ] LeRobot `setup_motors` 스크립트로 SO-ARM-101 문맥에서 자동 설정 (권장)
+### WSL2 Toolchain 설치
+- Miniforge 설치 (conda 26.1.1)
+- conda env `lerobot` 생성 (Python 3.12.13)
+- `conda install ffmpeg -c conda-forge` (ffmpeg 8.0.1 with libsvtav1)
+- LeRobot editable 설치:
+  ```bash
+  cd ~ && git clone https://github.com/huggingface/lerobot.git
+  cd lerobot && pip install -e ".[feetech]"
+  ```
+- ⚠️ 매 WSL 세션에서 `conda activate lerobot` 필요
 
-### ❓ Open questions
-- 받은 드라이버 보드가 Waveshare 버전인가 Feetech FE-URT-1인가?
-- 전원 어댑터 12V 사양이 맞는가? (일부 키트는 7.4V 옵션도 있음)
+### 권한 설정
+- `sudo usermod -aG dialout $USER` → `/dev/ttyACM0` 접근 권한 부여
+- 그룹 변경 반영을 위해 `wsl --shutdown` 후 재시작 필요
 
-## 📋 2.2 SO-ARM-101 조립
-- [ ] 기구부 조립 (공급자 매뉴얼 참조)
-- [ ] 각 관절에 검증된 모터 장착
+### 모터 ID 할당 (양쪽 arm 완료)
+- `lerobot-find-port`로 각 보드의 포트 확정 (`/dev/ttyACM0`)
+- Follower 6개 모터 세팅:
+  ```bash
+  lerobot-setup-motors --robot.type=so101_follower --robot.port=/dev/ttyACM0
+  ```
+- Leader 6개 모터 세팅:
+  ```bash
+  lerobot-setup-motors --teleop.type=so101_leader --teleop.port=/dev/ttyACM0
+  ```
+- 순서: gripper(6) → wrist_roll(5) → wrist_flex(4) → elbow_flex(3) → shoulder_lift(2) → shoulder_pan(1)
+- 총 12개 모터 전부 ID + baudrate (1,000,000) 할당 완료
+
+### Sanity check (데이지 체인 연결 상태)
+- `robot.bus.sync_read("Present_Position", normalize=False)`로 raw encoder 값 읽기
+- Follower 6개, Leader 6개 모두 정상 범위(0~4095, 12-bit 인코더)에서 응답 확인
+- `normalize=True` 기본값은 calibration 파일이 없어서 실패함 → sanity check에서는 `normalize=False`로 우회
+- 정식 calibration은 Phase 5(Unreal 통합 직전)에서 `lerobot-calibrate`로 진행 예정
+
+### 해결된 이슈
+- **`/dev/ttyACM0` PermissionError**: `dialout` 그룹 미가입 → `usermod -aG dialout` + `wsl --shutdown`으로 해결
+- **usbipd attach 상태 불일치**: `usbipd list`는 `Attached`라고 하는데 WSL2에 장치가 없는 경우 → `usbipd detach --busid X-Y` 후 재attach로 해결 (WSL 재시작 시 종종 발생)
+- **`get_observation()` calibration 에러**: sanity check에는 calibration이 불필요하므로 `sync_read(..., normalize=False)`로 bus 레벨에서 raw 접근
+
+### ❓ Open questions (해결됨)
+- ~~드라이버 보드 종류~~: **Waveshare** ✅
+- ~~전원 어댑터 사양~~: Follower **12V**, Leader **5V** (모터 전압에 맞춤) ✅
+
+## ⏳ 2.2 SO-ARM-101 조립 (NEXT)
+- [ ] Leader arm 조립 (공급자 매뉴얼 참조)
+- [ ] Follower arm 조립
+- [ ] 각 관절에 라벨링된 모터 장착 (ID + L/F 구분)
 - [ ] 케이블링 (bus servo chain)
 - [ ] 전원 배선 검증 후 첫 통전
 
+### 조립 중 참고사항
+- 공식 가이드: https://huggingface.co/docs/lerobot/so101
+- STS3215 중앙 위치는 raw 값 약 2048 (0~4095 중간)
+- 조립 전 각 모터의 라벨링 권장: `F1-SP`, `F2-SL`, ..., `F6-GR`, `L1-SP`, ..., `L6-GR`
+
 ## 📋 2.3 조립 후 전체 스윕 테스트
-- [ ] 6개 모터 모두 응답 확인
+- [ ] 12개 모터 모두 데이지 체인으로 응답 확인 (양쪽 arm)
+- [ ] 각 관절 손으로 돌렸을 때 해당 ID의 raw_pos 값 변화 확인
 - [ ] 각 관절 ±10도 정도 안전 범위 테스트 동작
 - [ ] 기계적 간섭 부위 확인
+
+## 📋 2.4 LeRobot Calibration
+- [ ] `lerobot-calibrate --robot.type=so101_follower ...`
+- [ ] `lerobot-calibrate --teleop.type=so101_leader ...`
+- [ ] Calibration 파일 위치: `~/.cache/huggingface/lerobot/calibration/`
+- [ ] Calibration 후 `get_observation()`으로 degrees 단위 관절 값 확인
 
 ---
 
@@ -300,12 +351,15 @@ sudo apt install -y ros-humble-rosbridge-suite
 | 3 | `ros2 topic pub/echo` CLI 조합이 WSL2에서 먹통 | `demo_nodes_cpp talker/listener` 사용 |
 | 4 | 좌표계 혼란 | UE는 cm/left-handed, ROS는 m/right-handed. Y축 뒤집기 + quaternion Y/W 부호 뒤집기 |
 | 5 | WebSocket 콜백에서 UObject 직접 접근 → 크래시 | `AsyncTask(ENamedThreads::GameThread, ...)` 마샬링 필수 |
+| 6 | `/dev/ttyACM0` PermissionError | `usermod -aG dialout $USER` + `wsl --shutdown` |
+| 7 | usbipd `Attached` 상태인데 WSL2에 장치 없음 | `usbipd detach` 후 재attach |
+| 8 | LeRobot `get_observation()` calibration 에러 (sanity check 단계) | `bus.sync_read(..., normalize=False)`로 raw 읽기 |
 
 ---
 
 # Appendix B — Recurring Commands
 
-## WSL2 측
+## WSL2 측 — ROS2
 ```bash
 # rosbridge 기동
 source /opt/ros/humble/setup.bash
@@ -318,7 +372,32 @@ ros2 run demo_nodes_cpp talker
 ros2 run demo_nodes_cpp listener
 ```
 
-## Windows 측
+## WSL2 측 — LeRobot
+```bash
+# 환경 활성화 (매 세션)
+conda activate lerobot
+
+# 포트 찾기
+lerobot-find-port
+
+# 모터 ID 세팅 (출고 상태 모터 → ID 할당)
+lerobot-setup-motors --robot.type=so101_follower --robot.port=/dev/ttyACM0
+lerobot-setup-motors --teleop.type=so101_leader --teleop.port=/dev/ttyACM0
+
+# Sanity check (raw encoder 값 읽기)
+python - <<'EOF'
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+cfg = SO101FollowerConfig(port="/dev/ttyACM0", id="test")
+robot = SO101Follower(cfg)
+robot.connect(calibrate=False)
+raw = robot.bus.sync_read("Present_Position", normalize=False)
+for name, val in raw.items():
+    print(f"  {name:15s} id={robot.bus.motors[name].id}  raw_pos={val}")
+robot.disconnect()
+EOF
+```
+
+## Windows 측 — Unreal 빌드
 ```powershell
 # 네트워크 검증
 Test-NetConnection -ComputerName 127.0.0.1 -Port 9090
@@ -333,11 +412,19 @@ Test-NetConnection -ComputerName 127.0.0.1 -Port 9090
   -projectfiles -project="$PWD\SO101_Twin.uproject" -game -rocket -progress
 ```
 
-## USB 포워딩 (Phase 2에서 사용 예정)
+## Windows 측 — USB 포워딩 (usbipd)
+PowerShell 프로필(`$PROFILE`)에 함수 등록됨:
 ```powershell
+Attach-Follower   # busid 1-7
+Attach-Leader     # busid 3-2
+Attach-Both       # 둘 다
+
+# 상태 불일치 시
+usbipd detach --busid 1-7
+Attach-Follower
+
+# 현재 상태 확인
 usbipd list
-usbipd bind --busid <X-Y>
-usbipd attach --wsl --busid <X-Y>
 ```
 
 ---
@@ -348,6 +435,8 @@ usbipd attach --wsl --busid <X-Y>
 
 - **2026-04-09 (Session 1)**: Phase 0 전체 완료, Phase 1 전체 완료. `?x=1` 워크어라운드와 `127.0.0.1` 이슈 발견 및 해결. 첫 end-to-end 메시지 수신 성공. PROGRESS.md, CLAUDE.md, SKILL.md 초안 작성.
 
+- **2026-04-10 (Session 2)**: Phase 2.1 완료. Waveshare 드라이버 보드 2개(Follower 12V, Leader 5V) 확정. usbipd-win으로 WSL2 포워딩 셋업 (PowerShell 프로필 헬퍼 함수 `Attach-Follower`/`Attach-Leader`/`Attach-Both`). WSL2에 Miniforge + conda env `lerobot` (Python 3.12) + LeRobot editable install + feetech extra. `dialout` 그룹 이슈 해결 후 `lerobot-setup-motors`로 Leader + Follower 총 12개 STS3215 모터에 ID 1~6 할당 완료. 데이지 체인 상태에서 `sync_read(..., normalize=False)` raw 읽기로 12개 모터 전부 응답 확인. Open question 2개(보드 종류, 전원 사양) 모두 closed.
+
 ---
 
-**Next session start**: Phase 2.1 (STS3215 모터 개별 검증)부터 시작. 드라이버 보드 종류와 전원 사양 확인이 첫 단계.
+**Next session start**: Phase 2.2 (SO-ARM-101 기구부 조립) 부터 시작. LeRobot 공식 `assemble_so101` 가이드 따라 Leader + Follower 두 암을 조립. 조립 후 2.3(전체 스윕 테스트) → 2.4(calibration)로 이어짐.
