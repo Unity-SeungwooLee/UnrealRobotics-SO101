@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class SO101_Twin : ModuleRules
@@ -15,6 +16,9 @@ public class SO101_Twin : ModuleRules
             "Json",
             "JsonUtilities"
         });
+
+        PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "RosBridge"));
+        PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Robot"));
 
         // Uncomment if you are using Slate UI
         // PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

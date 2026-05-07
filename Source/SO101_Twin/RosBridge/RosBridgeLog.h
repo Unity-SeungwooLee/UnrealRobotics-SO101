@@ -1,4 +1,3 @@
-// Copyright ... (저작권 표시는 생략하거나 원하는 대로)
 #pragma once
 
 #include "CoreMinimal.h"
