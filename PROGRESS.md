@@ -15,10 +15,12 @@
   - WSL2 (Ubuntu 22.04) + conda env `lerobot` (Python 3.12) + LeRobot editable install
   - 통신: rosbridge_suite (WebSocket, port 9090)
   - **LeRobot ↔ ROS2 bridge**: two-process ZeroMQ IPC (Python 버전 비호환 때문 — 섹션 3.3 참조)
+  - **MoveIt 2**: 모션 플래닝 + FollowJointTrajectory action server (ZMQ 경유, Phase 7)
 - **Project root**: `C:\UnrealProjects\UnrealRobotics-SO101\`
 - **ROS2 workspace**: `~/UnrealRobotics/` (WSL2 경로: `/home/tmddn/UnrealRobotics/`)
   - `src/so101_description/` — URDF, 메시, launch 파일 (legalaspro에서 가져옴)
   - `src/lerobot_ros2_bridge/` — ZMQ ↔ ROS2 bridge 노드 (Phase 3.3에서 생성)
+  - `src/so101_moveit_config/` — MoveIt 설정 패키지 (Phase 7에서 생성)
 - **Related docs**:
   - `CLAUDE.md` — 프로젝트 메타 정보, 역할 분담, 빌드 명령
   - `SKILL.md` — Unreal C++ + ROS 통합 규칙과 known quirks
@@ -369,7 +371,8 @@ leader.disconnect()
 │   ├── __init__.py
 │   └── ros_bridge_node.py                 # rclpy 노드 (system py3.10에서 실행)
 └── scripts/
-    └── lerobot_worker.py                  # LeRobot + ZMQ (conda env에서 실행)
+    ├── lerobot_worker.py                  # LeRobot + ZMQ (conda env에서 실행)
+    └── joint_trajectory_action_server.py  # MoveIt FollowJointTrajectory (Phase 7에서 추가)
 ```
 
 ### End-to-end 검증 성공 (dummy 데이터)
@@ -618,77 +621,497 @@ Unreal Editor: Play → RobotVisualizer가 자동 연결 및 구독
 
 ---
 
-# Phase 6 — Unreal → ROS 송신 파이프 확장
+# Phase 6 — Unreal → ROS 송신 파이프 확장 ✅ (완료)
 
-현재 `URosBridgeSubsystem`은 수신만 구현됨. 송신 기능 추가.
+## ✅ 6.1 Publish API 추가
+- `URosBridgeSubsystem::Advertise(Topic, Type)` 구현 — rosbridge v2 `{"op":"advertise"}` JSON 전송
+- `URosBridgeSubsystem::Publish(Topic, MsgJson)` 구현 — MsgJson을 JSON 객체로 파싱 후 `{"op":"publish","topic":"...","msg":{...}}` 형태로 전송. 미리 Advertise하지 않은 토픽에 publish하면 경고 후 드롭.
+- `AdvertisedTopics` TMap으로 트래킹 (재연결 시 `RestoreAdvertisements()`로 복원)
+- SKILL.md 섹션 3의 "advertise 먼저, 그 다음 publish" 원칙 준수
 
-## 📋 6.1 Publish API 추가
-- [ ] `URosBridgeSubsystem::Advertise(Topic, Type)` 구현
-- [ ] `URosBridgeSubsystem::Publish(Topic, JsonMessage)` 구현
-- [ ] `AdvertisedTopics` 트래킹 (재연결 시 복원)
-- [ ] SKILL.md 섹션 3의 "advertise 먼저, 그 다음 publish" 원칙 준수
+## ✅ 6.2 Connected 델리게이트 추가
+- `FOnRosBridgeConnected` / `FOnRosBridgeDisconnected` 델리게이트 추가
+- `RobotVisualizer`, `RosTestActor` 모두 `OnConnected.AddDynamic`으로 연결 이벤트 수신
+- 기존 타이머 폴링 방식 (`DoSubscribe()` + `SubscribeDelaySeconds`) 완전 제거
+- Subscribe/Advertise를 BeginPlay에서 즉시 큐잉 — 연결 전 호출 시 맵에 저장, 연결 시 자동 전송
 
-## 📋 6.2 Connected 델리게이트 추가
-- [ ] Subsystem에 `FOnConnected` 델리게이트 추가
-- [ ] 액터는 이 이벤트를 기다렸다가 Subscribe/Advertise 호출
-- [ ] 타이머 폴링 방식 제거
+## ✅ 6.3 자동 재연결 로직
+- `HandleConnectionError`/`HandleClosed`에서 `ScheduleReconnect()` 호출
+- 지수 백오프: 1s → 2s → 4s → 8s → 16s → 30s (cap)
+- 재연결 성공 시 `RestoreSubscriptions()` + `RestoreAdvertisements()` 자동 복원
+- 명시적 `Disconnect()` 호출 시에만 자동 재연결 비활성화
+- `HandleConnected`/`HandleConnectionError`/`HandleClosed` 모두 `AsyncTask(GameThread, ...)` 마샬링 추가 (기존에는 HandleConnected만 로그, 마샬링 없었음)
 
-## 📋 6.3 자동 재연결 로직
-- [ ] `OnConnectionError`/`OnClosed`에서 재연결 타이머 시작
-- [ ] 지수 백오프 (1s, 2s, 4s, 8s, cap 30s)
-- [ ] 재연결 성공 시 `SubscribedTopics` + `AdvertisedTopics` 자동 복원
+## ✅ 6.4 송신 검증
+- `ARosTestActor`에 Publish 테스트 기능 추가: 연결 시 `/unreal_test` (std_msgs/String) Advertise → 1초 간격 반복 타이머로 `"Hello from Unreal #N"` Publish
+- WSL2에서 `ros2 topic echo /unreal_test std_msgs/msg/String`으로 수신 확인 성공
 
-## 📋 6.4 송신 검증
-- [ ] Unreal에서 더미 토픽(`/unreal_test`) 퍼블리시
-- [ ] WSL2에서 `demo_nodes_cpp listener` 패턴의 test subscriber로 확인
+### 수정된 파일 목록
+```
+Source/SO101_Twin/RosBridge/
+├── RosBridgeSubsystem.h      # 델리게이트 2개, Advertise/Publish API, 재연결 멤버 추가
+├── RosBridgeSubsystem.cpp    # 전체 구현 (큐잉, 복원, 백오프, 스레드 마샬링)
+├── RosTestActor.h            # Publish 테스트 설정, OnConnected 콜백, 타이머 폴링 제거
+└── RosTestActor.cpp          # Publish 테스트 구현, 델리게이트 기반 전환
+Source/SO101_Twin/Robot/
+├── RobotVisualizer.h         # OnConnected 콜백, 타이머 폴링 제거
+└── RobotVisualizer.cpp       # 델리게이트 기반 전환, Subscribe 큐잉
+```
+
+### ⚠️ 발견된 이슈: rosbridge도 CycloneDDS 필수
+- rosbridge를 FastDDS(기본값)로 띄우고, `ros2 topic echo`를 CycloneDDS로 띄우면 DDS 도메인이 달라서 토픽이 안 보임
+- **해결**: rosbridge 터미널에서도 `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` + `export ROS_LOCALHOST_ONLY=1` 필수
+- Appendix A #14의 "모든 ROS2 터미널" 원칙을 rosbridge에도 반드시 적용해야 함 — 이전까지는 rosbridge가 WebSocket 경로라 FastDDS에서도 동작했기 때문에 누락하기 쉬웠음
+- ⚠️ rosbridge 자체의 WebSocket 수신/발신은 FastDDS에서도 작동하지만, rosbridge가 **ROS2 토픽으로 재발행**할 때 DDS를 사용하므로, 다른 노드/CLI와 같은 RMW를 써야 토픽이 보임
+
+---
+
+# Phase 7 — MoveIt 통합 ✅ (완료)
+
+## ✅ 7.1 MoveIt 2 설치
+- `sudo apt install -y ros-humble-moveit` 설치
+- `ros2 pkg list | grep moveit`로 25개 패키지 확인
+
+## ✅ 7.2 MoveIt Setup Assistant로 설정
+- WSLg를 통해 Setup Assistant GUI 실행
+- **URDF**: `so101_description` 패키지의 `urdf/legacy/so101_follower.urdf` 사용
+- **Self-collision matrix**: Generate Collision Matrix로 자동 생성
+- **Planning groups**:
+  - `arm`: shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll (KDL kinematics solver)
+  - `gripper`: gripper (solver 없음)
+- **Robot poses**: `home` (전부 0°), `ready` (shoulder_lift=-0.5, elbow_flex=0.5)
+- **End effector**: `gripper` (parent_link=gripper_link, parent_group=arm)
+- **패키지 생성**: `~/UnrealRobotics/src/so101_moveit_config/`
+
+### 설정 수정 사항
+- `package.xml`에 author/maintainer email이 비어있어 빌드 실패 → `user@example.com`으로 채움
+- `joint_limits.yaml`에서 `max_velocity: 10`, `max_acceleration: 0`이 정수(int)로 저장되어 MoveIt이 double 타입 에러로 crash → `10.0`, `0.0`으로 수정
+- `so101_follower.srdf`에 `shoulder_link` ↔ `lower_arm_link` self-collision disable 추가 — URDF/LeRobot zero point 오프셋으로 rest pose에서 메시 겹침이 false positive로 감지됨 (실물은 충돌하지 않음)
+
+## ✅ 7.3 Controller 인터페이스 결정 및 구현
+
+### ros2_control vs FollowJointTrajectory action server 비교
+- **옵션 A (채택)**: 기존 ZMQ bridge에 `FollowJointTrajectory` action server 추가. 구현량 작고 기존 아키텍처 유지.
+- **옵션 B (기각)**: ros2_control hardware_interface로 리팩터링. 표준적이지만 구현량 크고 아키텍처 변경 필요.
+- SO-ARM-101 수준에서는 옵션 A로 충분. 정밀도가 필요하면 Phase 8 이후 옵션 B로 마이그레이션 가능.
+
+### 신규/수정 파일
+```
+~/UnrealRobotics/src/so101_moveit_config/
+├── config/
+│   ├── moveit_controllers.yaml   # (신규) arm_controller: FollowJointTrajectory
+│   ├── joint_limits.yaml         # (수정) int→double
+│   ├── so101_follower.srdf       # (수정) shoulder_link↔lower_arm_link collision disable
+│   └── so101_follower.urdf       # (신규, 복사) legacy URDF
+├── launch/
+│   ├── demo.launch.py            # (수정) custom controller config + robot_state_publisher 분리
+│   └── demo.launch.py.bak        # 원본 백업
+~/UnrealRobotics/src/lerobot_ros2_bridge/scripts/
+└── joint_trajectory_action_server.py  # (신규) FollowJointTrajectory → ZMQ → worker
+```
+
+### moveit_controllers.yaml
+```yaml
+moveit_simple_controller_manager:
+  controller_names:
+    - arm_controller
+  arm_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll]
+```
+
+### joint_trajectory_action_server.py
+- `FollowJointTrajectory` action server (`/arm_controller/follow_joint_trajectory`)
+- MoveIt이 보낸 trajectory의 각 waypoint를 시간 순서대로 ZMQ REQ로 worker에 전달
+- 기존 ZMQ 프로토콜 그대로 사용 (`{"cmd": "send_follower_action", "args": {...}}`)
+- `/joint_states` 구독하여 feedback 발행
+- Worker의 `JOINT_LIMITS_DEG` physical limit 보호는 그대로 유지
+
+### demo.launch.py 수정
+- `moveit_simple_controller_manager` 사용하도록 파라미터 추가
+- `robot_state_publisher`는 launch에서 제외 (별도 터미널에서 실행 — bridge node의 `/joint_states`와 충돌 방지)
+- `move_group` + `rviz2` 두 노드만 launch
+
+## ✅ 7.4 MoveIt 데모 동작 검증
+
+### End-to-end 성공
+- RViz MotionPlanning 패널에서 Goal State → `ready` → **Plan** → 경로 시각화 확인 → **Execute** → 실물 follower arm 동작 확인
+- `home` 포즈로 복귀도 정상 동작
+- Interactive marker(IK)로 end effector 자유 목표 설정 + Plan + Execute 성공
+- Joints 탭 슬라이더(FK)로 개별 관절 목표 설정도 가능
+
+### 알려진 이슈: trajectory 실행 시 떨림
+- MoveIt trajectory의 waypoint를 하나씩 개별 ZMQ 명령으로 보내는 방식 때문에 stop-and-go 패턴 발생
+- STS3215 서보가 자체 보간을 하지 않아 떨림이 두드러짐
+- **완화**: Velocity Scaling을 0.10에서 0.30~0.50으로 올리면 감소
+- **근본 해결**: trajectory 다운샘플링 또는 서보 속도/가속도 프로파일 활용 (Phase 8 이후)
+
+## ✅ 7.5 Unreal에서 MoveIt 호출 방법 조사
+
+### rosbridge를 통한 MoveIt 호출 — 세 가지 방법 비교
+Phase 8에서 Unreal → MoveIt 연동 시 사용할 방법을 조사:
+
+**방법 A — rosbridge의 action 호출**:
+- rosbridge v2는 `call_service`는 지원하지만 action 호출은 공식 지원이 제한적
+- MoveIt의 `/move_action`은 action이라 직접 호출이 어려움
+
+**방법 B — 서비스 우회**:
+- MoveIt `move_group`에 서비스 기반 인터페이스가 있는지 확인 필요
+
+**방법 C — 중간 ROS2 노드 (추천)**:
+- Unreal이 rosbridge로 간단한 토픽(예: `/moveit_goal_pose`)에 목표 publish
+- 중간 Python 노드가 MoveIt Python API(`MoveGroupInterface`)로 플래닝+실행
+- 가장 안정적이고 유연한 방법
+
+**결정**: Phase 8 시작 시 방법 C를 우선 채택 예정. A/B도 재검토 가능.
+
+### 실행 방법 (MoveIt 연동 전체 — 6개 터미널)
+```
+⚠️ PowerShell에서 먼저: Attach-Both (USB 연결)
+
+터미널 1 (conda): python scripts/lerobot_worker.py --cmd-joints all --cmd-limit 120
+터미널 2 (ROS2): ros2 run lerobot_ros2_bridge bridge_node
+터미널 3 (ROS2): python3 ~/UnrealRobotics/src/lerobot_ros2_bridge/scripts/joint_trajectory_action_server.py
+터미널 4 (ROS2): ros2 launch so101_moveit_config demo.launch.py
+터미널 5 (ROS2): robot_state_publisher (YAML 파라미터로 URDF 전달)
+(선택) 터미널 6 (ROS2): ros2 launch rosbridge_server rosbridge_websocket_launch.xml (Unreal 연동 시)
+```
+
+⚠️ MoveIt 사용 시 worker는 `--cmd-joints all --cmd-limit 120`으로 실행해야 함. 기본 `--cmd-limit 5`는 baseline ±5°만 허용하여 MoveIt trajectory가 클램핑됨. `--cmd-limit 120`은 baseline clamp를 사실상 비활성화하고 `JOINT_LIMITS_DEG` physical limit만 남김.
 
 ---
 
-# Phase 7 — MoveIt 통합
-
-## 📋 7.1 MoveIt 2 설치
-- [ ] `sudo apt install ros-humble-moveit`
-
-## 📋 7.2 MoveIt Setup Assistant로 설정
-- [ ] SO-ARM-101 URDF 로드
-- [ ] Self-collision 매트릭스 생성
-- [ ] 플래닝 그룹 정의 (arm, gripper)
-- [ ] 엔드 이펙터 설정
-- [ ] 사전 정의 포즈 (home, ready)
-- [ ] ros2_control 인터페이스 설정 — **주의**: Phase 3에서 우리는 ros2_control 대신 rclpy bridge를 썼기 때문에 MoveIt이 요구하는 FollowJointTrajectory action server를 별도 구현하거나, 이 시점에 bridge 노드를 ros2_control 기반으로 리팩터링하는 결정 필요.
-- [ ] ❓ 옵션 A bridge에 `FollowJointTrajectory` action server 추가 vs 옵션 C(ros2_control 기반 하드웨어 인터페이스)로 부분 마이그레이션
-
-## 📋 7.3 MoveIt 데모 동작
-- [ ] `ros2 launch so101_moveit_config demo.launch.py`
-- [ ] RViz에서 MotionPlanning 패널로 목표 포즈 지정 → Plan → Execute
-- [ ] 실물 로봇으로 전달
-
-## 📋 7.4 프로그래밍 인터페이스
-- [ ] `move_group` 액션 서버 직접 호출 가능한지 확인
-- [ ] rosbridge로 액션 호출 가능 여부 조사
-  - ❓ rosbridge v2는 액션 지원이 제한적일 수 있음. 서비스 우회 방법 검토 필요.
-
----
 
 # Phase 8 — 최종 통합: 양방향 디지털 트윈
 
-## 📋 8.1 Unreal에서 타겟 지점 지정
-- [ ] 뷰포트 클릭 또는 드래그로 3D 공간에 타겟 포즈 생성
-- [ ] 좌표 변환 (UE → ROS)
-- [ ] `geometry_msgs/PoseStamped` JSON으로 직렬화
+## ✅ 8.1 Unreal에서 MoveIt에 목표 전달
 
-## 📋 8.2 MoveIt에 목표 전달
-- [ ] rosbridge를 통해 MoveIt 서비스/액션 호출
-- [ ] 계획된 경로를 실물 로봇이 실행
+### 방법 결정: 방법 C (중간 ROS2 Python 노드) 확정
+- Phase 7.5에서 조사한 3가지 방법 중 **방법 C** 채택
+- Unreal이 rosbridge로 간단한 토픽에 목표 publish → 중간 Python 노드가 MoveGroup action으로 전달
+- `moveit_commander`는 ROS2 Humble에서 미제공 (ROS 1 전용). `MoveItPy`도 소스 빌드 필요
+- **최종 방식**: `moveit_msgs/action/MoveGroup` action client를 rclpy로 직접 작성 — 추가 설치 없이 기존 환경에서 동작
 
-## 📋 8.3 실시간 상태 피드백 루프
-- [ ] 실행 중 `/joint_states`를 Unreal이 구독 → 3D 모델 실시간 업데이트
+### 5DOF 제약 발견 및 해결
+- SO-ARM-101은 5DOF arm이므로 임의의 6DOF Cartesian pose (position + orientation)를 동시에 만족시킬 수 없음
+- 첫 시도: PoseStamped로 position + orientation constraint 전송 → MoveIt `Unable to sample any valid states for goal tree` 에러 (IK 해 없음)
+- **해결**: orientation constraint 제거하고 position-only로 전송. Joint space goal을 기본으로 사용.
+
+### 중간 노드 구현: `moveit_goal_node.py`
+- 파일 위치: `~/UnrealRobotics/src/lerobot_ros2_bridge/scripts/moveit_goal_node.py`
+- 3가지 토픽 구독:
+  1. `/moveit_goal_named` (std_msgs/String) → named target ("home", "ready" 등)
+  2. `/moveit_goal_joints` (sensor_msgs/JointState) → joint space goal (radians)
+  3. `/moveit_goal_pose` (geometry_msgs/PoseStamped) → Cartesian position-only goal
+- `MoveGroup.Goal` 조립 후 `/move_action` action server에 전송
+- `MultiThreadedExecutor` + `ReentrantCallbackGroup`으로 동시 콜백 처리
+- 실행 중 새 goal 수신 시 무시 (이전 동작 완료 대기)
+- 에러코드 → 사람이 읽을 수 있는 문자열 변환
+
+### Named target 내장 (SRDF 기반)
+```python
+NAMED_TARGETS = {
+    'home':  {'shoulder_pan': 0.0, 'shoulder_lift': 0.0, 'elbow_flex': 0.0, 'wrist_flex': 0.0, 'wrist_roll': 0.0},
+    'ready': {'shoulder_pan': 0.0, 'shoulder_lift': -0.5, 'elbow_flex': 0.5, 'wrist_flex': 0.0, 'wrist_roll': 0.0},
+}
+```
+
+### ROS2 측 End-to-end 검증 성공
+- `ros2 topic pub --once /moveit_goal_named std_msgs/msg/String '{data: "ready"}'` → 실물 동작 ✅
+- `ros2 topic pub --once /moveit_goal_named std_msgs/msg/String '{data: "home"}'` → 복귀 ✅
+- `ros2 topic pub --once /moveit_goal_joints sensor_msgs/msg/JointState '{...}'` → 임의 관절 목표 ✅
+
+### Unreal C++ 수정: `ARobotVisualizer`에 MoveIt 명령 기능 추가
+
+**수정된 파일**:
+```
+Source/SO101_Twin/Robot/
+├── RobotVisualizer.h      # MoveIt 명령 UPROPERTY/UFUNCTION 추가
+└── RobotVisualizer.cpp    # MoveIt 토픽 advertise + publish 구현
+```
+
+**추가된 기능**:
+- `AdvertiseMoveItTopics()`: BeginPlay에서 3개 MoveIt 토픽 자동 advertise
+  - `/moveit_goal_named` (std_msgs/String)
+  - `/moveit_goal_joints` (sensor_msgs/JointState)
+  - `/moveit_goal_pose` (geometry_msgs/PoseStamped)
+- `SendNamedTarget()`: Details 패널에서 named target 문자열 입력 → publish (`CallInEditor` 버튼)
+- `SendJointGoal()`: Details 패널에서 5개 관절 값(radians) 설정 → publish (`CallInEditor` 버튼)
+- `SendPoseGoal()`: Details 패널에서 UE 좌표(cm) 입력 → ROS 좌표(m) 변환 → publish (`CallInEditor` 버튼)
+- 기존 `/joint_states` 구독 + 3D 모델 실시간 업데이트는 변경 없이 유지
+
+### Unreal End-to-end 검증 성공
+- PIE에서 SendNamedTarget("ready") → 실물 follower arm 동작 ✅
+- SendNamedTarget("home") → 복귀 ✅
+- SendJointGoal (임의 관절 값) → 동작 ✅
+- `/joint_states` 피드백으로 Unreal 3D 모델도 실시간 업데이트 ✅
+
+### 데이터 흐름 (Phase 8.1 완성)
+```
+Unreal (C++, PIE)
+    ↓ rosbridge publish (WebSocket, JSON)
+        ↓ /moveit_goal_named 또는 /moveit_goal_joints
+rosbridge_server (WSL2)
+    ↓ ROS2 토픽 재발행
+moveit_goal_node.py (rclpy)
+    ↓ MoveGroup action goal 조립
+        ↓ /move_action (action)
+move_group (MoveIt 2)
+    ↓ Plan (OMPL) + Execute
+        ↓ /arm_controller/follow_joint_trajectory (action)
+joint_trajectory_action_server.py
+    ↓ ZMQ REQ (degrees)
+lerobot_worker.py (conda, Py3.12)
+    ├─→ safety clamp (physical limits)
+    ├─→ send_action() → Follower arm (실물 동작)
+    └─→ get_observation() → ZMQ PUB
+         ↓
+ros_bridge_node.py → /joint_states
+    ↓ rosbridge WebSocket
+Unreal (C++) → ParseAndApplyJointStates → 3D 모델 업데이트
+```
+
+### 실행 방법 (Phase 8.1 전체 — 8개 터미널)
+```
+⚠️ PowerShell에서 먼저: Attach-Both (USB 연결)
+
+터미널 1 (conda): lerobot_worker.py --cmd-joints all --cmd-limit 120
+터미널 2 (ROS2): ros2 run lerobot_ros2_bridge bridge_node
+터미널 3 (ROS2): python3 ~/UnrealRobotics/src/lerobot_ros2_bridge/scripts/joint_trajectory_action_server.py
+터미널 4 (ROS2): ros2 launch so101_moveit_config demo.launch.py
+터미널 5 (ROS2): robot_state_publisher (YAML 파라미터로 URDF 전달)
+터미널 6 (ROS2): python3 ~/UnrealRobotics/src/lerobot_ros2_bridge/scripts/moveit_goal_node.py
+터미널 7 (ROS2): ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+Unreal Editor: PIE Play → RobotVisualizer Details 패널에서 MoveIt 명령
+```
+
+## 📋 8.1b Unreal 뷰포트 인터랙션 (우선순위 하향)
+- [ ] 뷰포트 클릭/드래그로 3D 공간에 타겟 포즈 생성
+- [ ] 좌표 변환 (UE → ROS) → publish
+- ⚠️ 실용적 근거 약함 (5DOF IK 실패율 높음, 실제 공장에서 마우스로 로봇 조작하는 시나리오 거의 없음). 데모용으로만 의미 있어서 우선순위 하향.
+
+## 📋 8.2 실시간 상태 피드백 루프
+- [x] 실행 중 `/joint_states`를 Unreal이 구독 → 3D 모델 실시간 업데이트 (Phase 5에서 이미 구현됨)
 - [ ] 계획된 경로(플래닝 결과)를 Unreal에 시각화 (선/웨이포인트)
 
-## 📋 8.4 오류 및 안전 처리
-- [ ] 연결 끊김 시 Unreal UI 경고
+## ⏳ 8.3 오류 및 안전 처리
+- [x] E-stop 기능 (Phase 9에서 구현 완료)
+- [x] Worker 상태 피드백 → Unreal 뷰포트 표시 (Phase 9에서 구현 완료)
+- [ ] 연결 끊김 시 Unreal UI 경고 (OnDisconnected 델리게이트 활용)
 - [ ] 플래닝 실패 시 사용자 피드백
-- [ ] E-stop 기능 (Unreal의 버튼 → rosbridge → ros2 topic → 서보 정지)
+
+---
+
+# Phase 9 — Record / Replay / Sync ✅ (완료)
+
+## ✅ 9.1 방향성 결정
+
+### 디지털 트윈의 핵심 가치 정의
+- 디지털 트윈의 본질적 가치는 **모니터링과 상태 파악**: 실물 로봇의 실시간 자세 표시, 관절 값 정상 범위 모니터링, 이력(히스토리) 시각화
+- 뷰포트 클릭으로 포즈 지정(8.1b)은 데모용일 뿐 실용적 근거 약함 → 우선순위 하향
+- 실제 공장 로봇은 미리 프로그래밍된 작업 시퀀스를 반복 실행 → **Record/Replay가 실용적 핵심 기능**
+
+### MoveIt 경유 vs 직접 제어 비교
+- MoveIt 경유: waypoint 개별 전송 → 서보 떨림(Appendix A #33), 시각적으로 좋지 않음
+- 직접 제어 (LeRobot `send_action()`): 텔레옵처럼 부드러운 동작
+- **결론**: Record/Replay는 MoveIt을 거치지 않고 worker → `send_action()` 직접 경로 사용
+
+### LeRobot 기능 조사
+- LeRobot은 `lerobot-record`, `lerobot-replay`, `lerobot-teleoperate` CLI 명령 기본 제공
+- ACT, Diffusion Policy 등 imitation learning 학습 지원
+- VLA 모델 (Pi0-FAST, GR00T N1.5 등) 지원
+- Phone Teleop (스마트폰 → IK 기반 텔레옵) 지원
+- **현재 Phase에서는** LeRobot 전체 파이프라인 대신 경량 관절 궤적 기록/재생을 자체 구현 (트랙 A)
+- **트랙 B (미래)**: LeRobot imitation learning 학습 → 자율 동작 (카메라 + GPU 필요)
+
+## ✅ 9.2 Worker Record/Replay 명령 구현
+
+### 새 ZMQ 명령 7개 추가 (`lerobot_worker.py`)
+- `start_teleop` — leader→follower sync 활성화 (approach 보간 포함)
+- `stop_teleop` — sync 비활성화
+- `start_record` — 텔레옵이 켜진 상태에서 관절 궤적 버퍼링 시작
+- `stop_record` — 기록 중단 + JSON 파일 저장 (텔레옵 유지)
+- `start_replay` — 저장된 파일 로드 + approach 보간 후 타이밍 맞춰 재생
+- `stop_replay` — 재생 즉시 중단
+- `estop` — 어떤 상태에서든 모든 동작 즉시 중단
+
+### 상태 관리
+- `self.state`: `"idle"` / `"syncing"` / `"recording"` / `"replaying"`
+- `self.teleop`: 텔레옵(sync) 활성화 여부 (state와 독립)
+- PUB 메시지에 `"state"`, `"teleop"` 필드 포함 → bridge node → Unreal까지 전파
+
+### 기록 파일 형식
+- 저장 경로: `~/recordings/recording_YYYYMMDD_HHMMSS.json`
+- 형식:
+  ```json
+  {
+    "version": 1,
+    "recorded_at": "2026-05-20T18:10:19",
+    "rate_hz": 30.0,
+    "num_frames": 493,
+    "duration_sec": 17.1,
+    "joint_names": ["shoulder_pan", ...],
+    "frames": [
+      {"ts": 0.0, "joints": {"shoulder_pan": -5.89, ...}},
+      ...
+    ]
+  }
+  ```
+- `start_replay`에 `filename` 미지정 시 가장 최근 파일 자동 선택
+- `loop` 옵션으로 반복 재생 가능
+
+### 안전 기능
+- 기록 중 shutdown 시 자동 저장
+- E-stop은 상태와 무관하게 즉시 모든 동작 중단 + teleop 해제
+- 기존 safety clamp (`JOINT_LIMITS_DEG`) 보호는 replay에서도 그대로 유지
+
+## ✅ 9.3 Approach 보간 (Smooth Transition) 구현
+
+### 문제
+- Replay 시작 시 현재 위치와 recording 첫 프레임 사이에 차이가 크면 서보가 최대 속도로 순간 이동 → 기어 충격 부하
+- Loop 전환 시 마지막 프레임 → 첫 프레임 사이에도 동일 문제
+- Sync On 시 leader와 follower 위치가 다르면 follower가 튀는 현상
+
+### 해결: Cosine Ease-In-Out 보간
+- 보간 커브: `factor = (1 - cos(t × π)) / 2` — 시작/끝이 부드럽게 감속/가속
+- Duration = 최대 관절 각도 차이 ÷ approach speed (degrees/sec)
+- 기본 속도: 45°/s (예: 90° 차이 → 2초, 10° 차이 → 0.3초)
+- 최소 duration 0.3초 (너무 짧은 이동에서도 최소한의 부드러움 보장)
+- 1° 미만 차이: approach 스킵, 즉시 시작
+
+### 적용 지점 3곳
+1. **Sync On (start_teleop)**: follower → leader 현재 위치까지 approach → 완료 후 teleop 자동 활성화 (`"syncing"` 상태)
+2. **Start Replay**: follower → recording 첫 프레임까지 approach → 완료 후 재생 시작
+3. **Loop 전환**: 마지막 프레임 → 첫 프레임까지 approach → 완료 후 재생 반복
+
+### 설정 가능
+- Worker CLI: `--approach-speed 45.0` (기본값)
+- Unreal Details 패널: `ApproachSpeed` 슬라이더 (5~300°/s)
+- 명령 단위 오버라이드: `"approach_speed": 30.0`
+
+## ✅ 9.4 Bridge Node 명령 중계 구현
+
+### 새 ROS2 토픽 2개 (`ros_bridge_node.py`)
+- `/robot_command` (std_msgs/String, 구독) — Unreal에서 JSON 명령 수신 → ZMQ REQ로 worker에 전달
+- `/robot_status` (std_msgs/String, 발행) — worker 응답 및 상태 변화를 Unreal에 전달
+
+### 상태 전파
+- Worker PUB 메시지의 `"state"`, `"teleop"` 필드를 읽어 상태 변화 시 `/robot_status`에 발행
+- 명령 응답도 `/robot_status`에 발행 (성공/에러/타임아웃)
+
+## ✅ 9.5 Unreal C++ 버튼 인터페이스 구현
+
+### Details 패널 새 섹션 (`RobotVisualizer.h/.cpp`)
+- **ROS|Sync**: `SyncOn`, `SyncOff` 버튼 + `bSyncActive` 상태 표시
+- **ROS|Record**: `StartRecord`, `StopRecord` 버튼
+- **ROS|Replay**: `ReplayFilename` 입력, `bReplayLoop` 체크박스, `ApproachSpeed` 슬라이더 (5~300°/s), `StartReplay`, `StopReplay` 버튼
+- **ROS|Safety**: `EStop` 버튼
+- **ROS|Status**: `WorkerState` (idle/syncing/recording/replaying 실시간 표시)
+
+### 뷰포트 피드백
+- 초록: recording 상태, Sync ON, 저장 완료
+- 시안: replaying 상태
+- 노랑: 중단됨, Sync OFF
+- 빨강: E-stop, 에러, 연결 안 됨
+
+### 명령 전달 경로
+```
+Unreal (Details 버튼 클릭)
+    ↓ /robot_command (std_msgs/String, JSON)
+rosbridge_server (WebSocket → ROS2)
+    ↓ /robot_command
+ros_bridge_node.py (rclpy)
+    ↓ ZMQ REQ
+lerobot_worker.py (conda, Py3.12)
+    ├─→ 명령 실행 (teleop/record/replay/estop)
+    └─→ ZMQ PUB (상태 + 관절 데이터)
+         ↓
+ros_bridge_node.py → /robot_status + /joint_states
+    ↓ rosbridge WebSocket
+Unreal (C++) → 상태 표시 + 3D 모델 업데이트
+```
+
+## ✅ 9.6 End-to-end 검증 성공
+
+### 테스트 완료 항목
+1. **Sync On** → leader 위치로 부드럽게 approach → teleop 활성화 ✅
+2. **Start Record** → Sync가 켜진 상태에서 기록 시작, follower가 leader를 따라감 ✅
+3. **Stop Record** → 파일 저장, Sync 유지 ✅
+4. **Start Replay** → approach 보간 후 recording 재생, Unreal 3D 모델 실시간 반영 ✅
+5. **Loop Replay** → 마지막→처음 approach 보간 후 반복 ✅
+6. **Stop Replay** → 즉시 중단 ✅
+7. **E-Stop** → 어떤 상태에서든 즉시 정지 ✅
+8. **Sync Off** → teleop 해제 ✅
+
+### 워크플로우 (의도된 사용 순서)
+```
+1. Sync On → leader와 follower 정렬 (보간 이동)
+2. Leader arm을 원하는 시작 위치로 이동
+3. Start Record → 텔레옵 상태에서 동작 기록
+4. 원하는 동작 수행 (leader 조작)
+5. Stop Record → 파일 저장
+6. Sync Off → teleop 해제
+7. Start Replay → 기록된 동작 재생 (반복 가능)
+8. Stop Replay → 중단
+9. Sync On → 다시 정렬 후 rest position으로 수동 복귀
+```
+
+### 수정된 파일 목록
+```
+WSL2:
+  ~/UnrealRobotics/src/lerobot_ros2_bridge/scripts/lerobot_worker.py  (480→978줄)
+  ~/UnrealRobotics/src/lerobot_ros2_bridge/lerobot_ros2_bridge/ros_bridge_node.py  (200→318줄)
+
+Windows:
+  Source/SO101_Twin/Robot/RobotVisualizer.h   (187→258줄)
+  Source/SO101_Twin/Robot/RobotVisualizer.cpp  (472→730줄)
+```
+
+### 실행 방법 (Record/Replay 전체 — 4개 터미널)
+```
+⚠️ PowerShell에서 먼저: Attach-Both (USB 연결)
+
+터미널 1 (conda): lerobot_worker.py --cmd-joints all --cmd-limit 120
+터미널 2 (ROS2): ros2 run lerobot_ros2_bridge bridge_node
+터미널 3 (ROS2): ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+Unreal Editor: PIE Play → RobotVisualizer Details 패널에서 버튼 조작
+```
+
+---
+
+# Phase 10 — UI 기획 및 구현 (📋 Planned)
+
+## 📋 10.1 디지털 트윈 모니터링 UI
+- [ ] 실시간 로봇 자세 표시 (3D 모델은 이미 구현, 2D 대시보드 추가)
+- [ ] 관절 값 정상 범위 모니터링 (한계 근접 시 경고)
+- [ ] 이력(히스토리) 시각화 (관절 값 변화 그래프)
+
+## 📋 10.2 Record/Replay 조작 UI
+- [ ] 뷰포트 내 조작 패널 (현재 Details 패널 → 독립 UI 위젯으로 승격)
+- [ ] Recording 목록 표시 + 선택 UI
+- [ ] Replay 진행률 표시 (프로그레스 바)
+- [ ] Worker 상태 인디케이터 (idle/syncing/recording/replaying)
+
+## 📋 10.3 안전 UI
+- [ ] 연결 상태 인디케이터 (connected/disconnected/reconnecting)
+- [ ] E-stop 버튼 (뷰포트 상단, 항상 접근 가능)
+- [ ] 오류 알림 패널
+
+---
+
+# Future — LeRobot AI 통합 (트랙 B, 📋 Planned)
+
+## 📋 F.1 Imitation Learning
+- [ ] 카메라 추가 (USB 웹캠 → LeRobot observation)
+- [ ] `lerobot-record`로 관절 + 카메라 데이터셋 수집
+- [ ] ACT 또는 Diffusion Policy로 학습
+- [ ] 학습된 정책 → worker에서 자율 실행
+
+## 📋 F.2 VLA (Vision-Language-Action)
+- [ ] Pi0-FAST 또는 GR00T N1.5 모델 통합
+- [ ] 언어 지시("검은 블록을 집어") → 로봇 자율 동작
 
 ---
 
@@ -726,6 +1149,15 @@ Unreal Editor: Play → RobotVisualizer가 자동 연결 및 구독
 | 26 | **블렌더 STL Import 시 축 설정 변경 금지** — 보기 좋게 세우려고 Import 축을 바꾸면 URDF mesh offset과 불일치. | STL Import 시 Forward/Up 축은 기본값 그대로 유지. 블렌더에서 이상하게 누워보여도 무시. |
 | 27 | **UE 하위 폴더 간 include 실패** — `Robot/`에서 `RosBridge/`의 헤더를 include 못 찾음 (`C1083: No such file or directory`). UE가 모듈 내 하위 폴더를 자동으로 include path에 넣지 않음. | `.Build.cs`에 `PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "폴더명"))` 추가. |
 | 28 | **URDF/LeRobot zero point 오프셋으로 인한 Unreal 비주얼 차이** — gripper 닫힌 정도, rest 포즈 부품 겹침. URDF home pose(0°) ≠ LeRobot calibration zero point. | Calibration JSON 수정 금지 (실물 영향). Unreal 측에서 joint별 오프셋 보정값을 UPROPERTY로 추가하여 에디터에서 미세 조정. |
+| 29 | **rosbridge를 FastDDS로 띄우면 CycloneDDS 터미널에서 토픽이 안 보임** — rosbridge 자체의 WebSocket 경로는 FastDDS에서도 동작하지만, ROS2 토픽 재발행 시 DDS를 사용하므로 다른 노드/CLI와 RMW가 달라지면 토픽이 보이지 않음. `ros2 topic list`에 rosbridge가 발행한 토픽이 안 뜸. | rosbridge 터미널에서도 `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` + `export ROS_LOCALHOST_ONLY=1` 필수. Appendix A #14의 "모든 ROS2 터미널" 원칙을 rosbridge에도 예외 없이 적용. |
+| 30 | **MoveIt Setup Assistant가 `joint_limits.yaml`에 정수 값을 저장** — `max_velocity: 10`, `max_acceleration: 0`으로 저장되어 move_group이 `InvalidParameterTypeException: expected [double] got [integer]`로 crash. | `joint_limits.yaml`에서 모든 수치를 `10.0`, `0.0` 등 실수(float)로 수정. |
+| 31 | **URDF/LeRobot zero point 오프셋으로 MoveIt self-collision false positive** — rest pose에서 `shoulder_link` ↔ `lower_arm_link` 충돌 감지. URDF 메시가 겹쳐 보이지만 실물은 충돌하지 않음. MoveIt이 "Computed path is not valid"로 플래닝 거부. | SRDF에 `<disable_collisions link1="shoulder_link" link2="lower_arm_link" reason="Adjacent"/>` 추가. |
+| 32 | **MoveIt demo.launch.py에서 robot_state_publisher를 함께 띄우면 `/joint_states` 충돌** — bridge node가 이미 `/joint_states`를 발행 중이므로 launch가 띄운 것과 충돌. | `demo.launch.py`에서 `robot_state_publisher`를 제외하고 별도 터미널에서 실행. |
+| 33 | **MoveIt trajectory 실행 시 서보 떨림** — waypoint를 하나씩 개별 ZMQ 명령으로 보내는 stop-and-go 패턴. STS3215가 자체 보간을 하지 않음. | Velocity Scaling을 0.30~0.50으로 올려 완화. 근본 해결은 trajectory 다운샘플링 또는 서보 프로파일 활용. |
+| 34 | **`moveit_commander`가 ROS2 Humble에서 미제공** — `ros-humble-moveit-commander` 패키지가 존재하지 않음. `moveit_commander`는 ROS 1 전용. | `moveit_msgs/action/MoveGroup` action client를 rclpy로 직접 작성. MoveItPy는 소스 빌드 필요하므로 기각. |
+| 35 | **SO-ARM-101 (5DOF)에 6DOF Cartesian pose goal 전송 시 IK 실패** — MoveIt `Unable to sample any valid states for goal tree`. 5개 관절로는 position + orientation을 동시에 만족시킬 수 없음. | Orientation constraint를 제거하고 position-only goal로 전송. 또는 joint space goal 사용 (추천). |
+| 36 | **Sync On 시 follower가 leader 위치로 순간 이동(튀는 현상)** — 텔레옵 활성화 시 leader와 follower 위치 차이가 크면 서보가 최대 속도로 이동. 기어 충격 부하 + 시각적으로 위험해 보임. | Sync On에 approach 보간 추가 (`"syncing"` 상태). Cosine ease-in-out, 기본 45°/s. 1° 미만 차이 시 스킵. |
+| 37 | **Replay loop 전환 시 서보 순간 이동** — recording의 시작/끝 위치가 다르면 loop 전환 시 서보가 최대 속도로 첫 프레임으로 복귀. 반복 재생 시 매 cycle마다 충격 발생. | Loop 전환 시에도 approach 보간 삽입. 마지막 프레임 → 첫 프레임 사이에 cosine 보간. |
 
 ---
 
@@ -770,6 +1202,7 @@ ros2 launch so101_description display.launch.py variant:=leader
 cd ~/UnrealRobotics
 colcon build --packages-select lerobot_ros2_bridge --symlink-install
 colcon build --packages-select so101_description --symlink-install
+colcon build --packages-select so101_moveit_config --symlink-install
 ```
 
 ## WSL2 측 — LeRobot ↔ ROS2 Bridge (Phase 3.3 아키텍처)
@@ -809,6 +1242,80 @@ rviz2
 # ─── 터미널 5: rosbridge (Unreal 연동 시) ───
 # (위 "ROS2 공통" 환경변수 설정 후)
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+```
+
+## WSL2 측 — MoveIt + Unreal 연동 (Phase 8.1 아키텍처 — 8개 터미널)
+```bash
+# ⚠️ PowerShell에서 먼저: Attach-Both (USB 연결)
+
+# ─── 터미널 1: LeRobot Worker (conda env) ───
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate lerobot
+sudo chmod 666 /dev/ttyACM*
+cd ~/UnrealRobotics/src/lerobot_ros2_bridge
+python scripts/lerobot_worker.py --cmd-joints all --cmd-limit 120
+# ⚠️ MoveIt 사용 시 --cmd-limit 120 필수 (기본 5°는 trajectory 클램핑)
+
+# ─── 터미널 2: ROS2 Bridge Node ───
+# (ROS2 공통 환경변수 설정 후)
+ros2 run lerobot_ros2_bridge bridge_node
+
+# ─── 터미널 3: FollowJointTrajectory Action Server ───
+# (ROS2 공통 환경변수 설정 후)
+python3 ~/UnrealRobotics/src/lerobot_ros2_bridge/scripts/joint_trajectory_action_server.py
+
+# ─── 터미널 4: MoveIt Demo Launch ───
+# (ROS2 공통 환경변수 설정 후)
+ros2 launch so101_moveit_config demo.launch.py
+
+# ─── 터미널 5: robot_state_publisher ───
+# (ROS2 공통 환경변수 설정 후)
+xacro ~/UnrealRobotics/src/so101_description/urdf/so101_arm.urdf.xacro variant:=follower > /tmp/so101_follower.urdf
+python3 -c "
+import yaml
+with open('/tmp/so101_follower.urdf') as f: urdf = f.read()
+params = {'robot_state_publisher': {'ros__parameters': {'robot_description': urdf}}}
+with open('/tmp/rsp_params.yaml', 'w') as f: yaml.dump(params, f, default_flow_style=False)
+"
+ros2 run robot_state_publisher robot_state_publisher --ros-args --params-file /tmp/rsp_params.yaml
+
+# ─── 터미널 6: MoveIt Goal Node (Phase 8.1에서 추가) ───
+# (ROS2 공통 환경변수 설정 후)
+python3 ~/UnrealRobotics/src/lerobot_ros2_bridge/scripts/moveit_goal_node.py
+
+# ─── 터미널 7: rosbridge (Unreal 연동) ───
+# (ROS2 공통 환경변수 설정 후)
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+
+# ─── Unreal Editor: PIE Play ───
+# RobotVisualizer Details 패널 → ROS|MoveIt 섹션에서 명령 전송
+```
+
+## WSL2 측 — Record/Replay + Unreal 연동 (Phase 9 아키텍처 — 4개 터미널)
+```bash
+# ⚠️ PowerShell에서 먼저: Attach-Both (USB 연결)
+
+# ─── 터미널 1: LeRobot Worker (conda env) ───
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate lerobot
+sudo chmod 666 /dev/ttyACM*
+cd ~/UnrealRobotics/src/lerobot_ros2_bridge
+python scripts/lerobot_worker.py --cmd-joints all --cmd-limit 120
+
+# ─── 터미널 2: ROS2 Bridge Node ───
+# (ROS2 공통 환경변수 설정 후)
+ros2 run lerobot_ros2_bridge bridge_node
+
+# ─── 터미널 3: rosbridge (Unreal 연동) ───
+# (ROS2 공통 환경변수 설정 후)
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+
+# ─── Unreal Editor: PIE Play ───
+# RobotVisualizer Details 패널:
+#   ROS|Sync → Sync On (leader-follower 정렬)
+#   ROS|Record → Start Record / Stop Record
+#   ROS|Replay → Start Replay / Stop Replay (ApproachSpeed 조절 가능)
+#   ROS|Safety → EStop (긴급 정지)
 ```
 
 ## WSL2 측 — LeRobot 단독 (calibration, sanity check 등)
@@ -959,6 +1466,47 @@ usbipd list
   - **비주얼 이슈 발견 (보류)**: gripper 닫힌 정도 차이 + rest 포즈 부품 겹침. URDF/LeRobot zero point 오프셋 차이가 원인. Unreal 측 joint별 오프셋 보정으로 해결 예정 (Calibration JSON은 건드리지 않음).
   - Appendix A에 gotcha 5건 추가 (#24 degenerate triangle, #25 블렌더 5.x 축, #26 STL Import 축, #27 UE include path, #28 zero point 오프셋).
 
+- **2026-05-12 (Session 9)**: **Phase 6 전체 완료 + Phase 7 전체 완료**.
+  - **Phase 6 (Unreal → ROS 송신 파이프)**:
+    - `FOnRosBridgeConnected`/`FOnRosBridgeDisconnected` 델리게이트 추가. 타이머 폴링 → 델리게이트 기반 전환.
+    - `Advertise()`/`Publish()` 구현. Subscribe/Advertise 연결 전 큐잉 → 연결 시 자동 전송.
+    - 자동 재연결: 지수 백오프(1s→30s cap). 재연결 시 Subscriptions + Advertisements 자동 복원.
+    - 송신 검증: `/unreal_test` Publish → WSL2에서 `ros2 topic echo`로 수신 성공.
+    - rosbridge DDS 도메인 이슈 발견: rosbridge 터미널에서도 CycloneDDS 필수.
+  - **Phase 7 (MoveIt 통합)**:
+    - MoveIt 2 설치 (`ros-humble-moveit`, 25개 패키지).
+    - Setup Assistant로 `so101_moveit_config` 패키지 생성 (SRDF, kinematics, joint_limits, collision matrix).
+    - `joint_limits.yaml` int→double 수정, SRDF에 shoulder_link↔lower_arm_link collision disable 추가.
+    - Controller 방식 결정: ros2_control 대신 FollowJointTrajectory action server(ZMQ 경유) 채택.
+    - `joint_trajectory_action_server.py` 작성 — MoveIt trajectory waypoint를 ZMQ로 worker에 전달.
+    - `demo.launch.py` 수정 — `moveit_simple_controller_manager` 사용, `robot_state_publisher` 분리.
+    - **End-to-end 성공**: RViz MotionPlanning → Plan → Execute → 실물 follower arm 동작.
+    - IK(interactive marker) + FK(Joints 슬라이더) 양쪽 방식으로 목표 설정 + 실행 확인.
+    - Trajectory 실행 시 서보 떨림 발견 — waypoint 개별 전송 방식의 한계. Velocity Scaling 올리면 완화.
+    - Phase 8 준비: Unreal→MoveIt 호출 방법 3가지(A: rosbridge action, B: 서비스 우회, C: 중간 노드) 조사. 방법 C 추천.
+    - Appendix A에 gotcha 4건 추가 (#30 joint_limits int, #31 self-collision false positive, #32 robot_state_publisher 충돌, #33 서보 떨림).
+
+- **2026-05-13 (Session 10)**: **Phase 8.1 완료 (Unreal → MoveIt 목표 전달)**.
+  - **방법 C 확정**: 중간 ROS2 Python 노드 방식. `moveit_commander`는 Humble에서 미제공 확인. `moveit_msgs/action/MoveGroup` action client를 rclpy로 직접 작성.
+  - **5DOF 제약 발견**: Cartesian pose goal (position + orientation)로 전송 시 IK 실패 (`Unable to sample any valid states for goal tree`). SO-ARM-101의 5개 관절로는 6DOF pose를 만족시킬 수 없음.
+  - **해결**: orientation constraint 제거 → position-only Cartesian goal + joint space goal 기본 사용.
+  - **`moveit_goal_node.py` 작성**: 3가지 토픽 구독 (`/moveit_goal_named`, `/moveit_goal_joints`, `/moveit_goal_pose`) → MoveGroup action 전달. Named target 내장 ("home", "ready").
+  - **ROS2 측 검증 성공**: `ros2 topic pub` → named target, joint goal 모두 실물 동작 확인.
+  - **Unreal C++ 수정**: `ARobotVisualizer`에 `SendNamedTarget()`/`SendJointGoal()`/`SendPoseGoal()` 추가. `CallInEditor` 버튼으로 Details 패널에서 즉시 테스트 가능. 3개 MoveIt 토픽 자동 advertise.
+  - **Unreal End-to-end 성공**: PIE → SendNamedTarget("ready"/"home") → 실물 동작 + 3D 모델 실시간 업데이트 확인. SendJointGoal도 성공.
+  - Appendix A에 gotcha 2건 추가 (#34 moveit_commander 미제공, #35 5DOF IK 실패).
+
+- **2026-05-20 (Session 11)**: **Phase 9 전체 완료 (Record/Replay/Sync)**.
+  - **방향성 결정**: 디지털 트윈의 본질적 가치는 모니터링 + 상태 파악. 뷰포트 클릭 포즈 지정(8.1b)은 실용적 근거 약해 우선순위 하향. Record/Replay가 실제 공장 반복 작업에 해당하는 핵심 기능.
+  - **LeRobot 기능 조사**: record/replay CLI 기본 제공, ACT/Diffusion Policy 학습, VLA 모델, Phone Teleop 등 확인. 현재는 경량 자체 구현(트랙 A), 미래에 LeRobot imitation learning(트랙 B) 확장 가능.
+  - **Worker 대규모 확장 (480→978줄)**: 7개 새 ZMQ 명령 (start/stop_teleop, start/stop_record, start/stop_replay, estop). 상태 관리 (`idle`/`syncing`/`recording`/`replaying`). 관절 궤적 JSON 저장/로드. Cosine ease-in-out approach 보간.
+  - **Approach 보간 구현**: Sync On, Replay 시작, Loop 전환 3곳에 적용. 기본 45°/s, Unreal에서 조절 가능. 서보 기어 충격 방지 + 시각적 자연스러움.
+  - **Bridge node 확장 (200→318줄)**: `/robot_command` 구독 + `/robot_status` 발행. 상태/teleop 변화 전파.
+  - **Unreal C++ 확장**: Details 패널에 ROS|Sync, ROS|Record, ROS|Replay, ROS|Safety, ROS|Status 섹션 추가. 뷰포트 컬러 피드백 (초록/시안/노랑/빨강).
+  - **End-to-end 전체 워크플로우 검증 성공**: Sync On → Record → Stop → Replay (loop) → EStop → Sync On → 복귀.
+  - **발견된 이슈와 해결**: Sync On 시 follower 튀는 현상 → approach 보간으로 해결. Stop Record 후 teleop 해제되는 문제 → teleop 유지하도록 수정. Start Record 시 teleop 미활성 상태에서 호출 가능한 문제 → Sync On 선행 필수로 변경.
+  - Appendix A에 gotcha 2건 추가 (#36 Sync On 튀는 현상, #37 Replay loop 순간 이동).
+
 ---
 
-**Next session start**: Phase 6 (Unreal → ROS 송신 파이프 확장)부터 시작. `URosBridgeSubsystem`에 Advertise/Publish API를 추가하고, 자동 재연결 로직을 구현하는 것이 목표. 또한 비주얼 미세 조정(joint별 zero point 오프셋 보정)도 병행 가능.
+**Next session start**: Phase 8.3 나머지 (연결 끊김 경고, 플래닝 실패 피드백) → Phase 10 (UI 기획 및 구현). 비주얼 미세 조정(joint별 zero point 오프셋 보정)은 큰 기능 완료 후 처리.

@@ -8,12 +8,12 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
-#include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "UObject/ConstructorHelpers.h"
 
 // =============================================================================
@@ -157,106 +157,103 @@ void ARobotVisualizer::BeginPlay()
 	};
 
 	// === base_link meshes ===
-	//   base_motor_holder: xyz(-0.0063647, -0.0000994, -0.0024) rpy(90, 0, 90) deg
 	Attach(BaseLink, TEXT("base_motor_holder_so101_v1"),
 		-0.00636471, -0.0000994414, -0.0024,
 		1.5708, 0.0, 1.5708);
-	//   base_so101_v2: xyz(-0.0063647, 0, -0.0024) rpy(90, 0, 90) deg
 	Attach(BaseLink, TEXT("base_so101_v2"),
 		-0.00636471, 0.0, -0.0024,
 		1.5708, 0.0, 1.5708);
-	//   sts3215 motor: xyz(0.0263353, 0, 0.0437) rpy(0, 0, 0)
 	Attach(BaseLink, TEXT("sts3215_03a_v1"),
 		0.0263353, 0.0, 0.0437,
 		0.0, 0.0, 0.0, true);
-	//   waveshare plate: xyz(-0.0309827, -0.0001994, 0.0474) rpy(90, 0, 90)
 	Attach(BaseLink, TEXT("waveshare_mounting_plate_so101_v2"),
 		-0.0309827, -0.000199441, 0.0474,
 		1.5708, 0.0, 1.5708);
 
 	// === shoulder_link meshes ===
-	//   sts3215 motor: xyz(-0.0303992, 0.0004222, -0.0417) rpy(90, 90, 0)
 	Attach(ShoulderLink, TEXT("sts3215_03a_v1"),
 		-0.0303992, 0.000422241, -0.0417,
 		1.5708, 1.5708, 0.0, true);
-	//   motor_holder_base: xyz(-0.0675992, -0.0001778, 0.01585) rpy(90, -90, 0)
 	Attach(ShoulderLink, TEXT("motor_holder_so101_base_v1"),
 		-0.0675992, -0.000177759, 0.0158499,
 		1.5708, -1.5708, 0.0);
-	//   rotation_pitch: xyz(0.0122008, 0.0000222, 0.0464) rpy(-90, 0, 0)
 	Attach(ShoulderLink, TEXT("rotation_pitch_so101_v1"),
 		0.0122008, 0.0000222413, 0.0464,
 		-1.5708, 0.0, 0.0);
 
 	// === upper_arm_link meshes ===
-	//   sts3215 motor: xyz(-0.11257, -0.0155, 0.0187) rpy(-180, 0, -90)
 	Attach(UpperArmLink, TEXT("sts3215_03a_v1"),
 		-0.11257, -0.0155, 0.0187,
 		-3.14159, 0.0, -1.5708, true);
-	//   upper_arm: xyz(-0.065085, 0.012, 0.0182) rpy(180, 0, 0)
 	Attach(UpperArmLink, TEXT("upper_arm_so101_v1"),
 		-0.065085, 0.012, 0.0182,
 		3.14159, 0.0, 0.0);
 
 	// === lower_arm_link meshes ===
-	//   under_arm: xyz(-0.0648499, -0.032, 0.0182) rpy(180, 0, 0)
 	Attach(LowerArmLink, TEXT("under_arm_so101_v1"),
 		-0.0648499, -0.032, 0.0182,
 		3.14159, 0.0, 0.0);
-	//   motor_holder_wrist: xyz(-0.0648499, -0.032, 0.018) rpy(-180, 0, 0)
 	Attach(LowerArmLink, TEXT("motor_holder_so101_wrist_v1"),
 		-0.0648499, -0.032, 0.018,
 		-3.14159, 0.0, 0.0);
-	//   sts3215 motor: xyz(-0.1224, 0.0052, 0.0187) rpy(-180, 0, -180)
 	Attach(LowerArmLink, TEXT("sts3215_03a_v1"),
 		-0.1224, 0.0052, 0.0187,
 		-3.14159, 0.0, -3.14159, true);
 
 	// === wrist_link meshes ===
-	//   sts3215_no_horn: xyz(0, -0.0424, 0.0306) rpy(90, 90, 0)
 	Attach(WristLink, TEXT("sts3215_03a_no_horn_v1"),
 		0.0, -0.0424, 0.0306,
 		1.5708, 1.5708, 0.0, true);
-	//   wrist_roll_pitch: xyz(0, -0.028, 0.0181) rpy(-90, -90, 0)
 	Attach(WristLink, TEXT("wrist_roll_pitch_so101_v2"),
 		0.0, -0.028, 0.0181,
 		-1.5708, -1.5708, 0.0);
 
 	// === gripper_link meshes ===
-	//   sts3215 motor: xyz(0.0077, 0.0001, -0.0234) rpy(-90, 0, 0)
 	Attach(GripperLink, TEXT("sts3215_03a_v1"),
 		0.0077, 0.0001, -0.0234,
 		-1.5708, 0.0, 0.0, true);
-	//   wrist_roll_follower: xyz(0, -0.0002182, 0.0009497) rpy(-180, 0, 0)
 	Attach(GripperLink, TEXT("wrist_roll_follower_so101_v1"),
 		0.0, -0.000218214, 0.000949706,
 		-3.14159, 0.0, 0.0);
 
 	// === moving_jaw_link meshes ===
-	//   moving_jaw: xyz(0, 0, 0.0189) rpy(0, 0, 0)
 	Attach(MovingJawLink, TEXT("moving_jaw_so101_v1"),
 		0.0, 0.0, 0.0189,
 		0.0, 0.0, 0.0);
 
 	UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: %d mesh components created"), AllMeshComponents.Num());
 
-	// --- Connect to ROS ---
+	// --- Connect to ROS via Subsystem ---
 	UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
 	if (!GI) return;
 
 	URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
 	if (!Ros) return;
 
+	// Bind delegates.
 	Ros->OnTopicMessage.AddDynamic(this, &ARobotVisualizer::OnRosMessage);
+	Ros->OnConnected.AddDynamic(this, &ARobotVisualizer::OnRosBridgeConnected);
 
+	// Subscribe is now queued even before connection — the subsystem will
+	// send it automatically when connected (including on reconnect).
+	Ros->Subscribe(JointStateTopic, JointStateType);
+
+	// Queue MoveIt topic advertisements (sent on connect).
+	AdvertiseMoveItTopics();
+
+	// Queue record/replay/estop topics.
+	SetupRecordReplayTopics();
+
+	// Initiate connection if not already connected.
 	if (!Ros->IsConnected())
 	{
 		Ros->Connect(RosBridgeUrl);
 	}
-
-	GetWorld()->GetTimerManager().SetTimer(
-		SubscribeTimerHandle, this, &ARobotVisualizer::DoSubscribe,
-		SubscribeDelaySeconds, false);
+	else
+	{
+		// Already connected (e.g. another actor already called Connect).
+		UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: already connected, subscription sent."));
+	}
 }
 
 // =============================================================================
@@ -270,22 +267,31 @@ void ARobotVisualizer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		if (URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>())
 		{
 			Ros->OnTopicMessage.RemoveDynamic(this, &ARobotVisualizer::OnRosMessage);
+			Ros->OnConnected.RemoveDynamic(this, &ARobotVisualizer::OnRosBridgeConnected);
 		}
 	}
 
-	if (GetWorld())
-	{
-		GetWorld()->GetTimerManager().ClearTimer(SubscribeTimerHandle);
-	}
+	bMoveItTopicsAdvertised = false;
+	bRecordReplayTopicsSetup = false;
 
 	Super::EndPlay(EndPlayReason);
 }
 
 // =============================================================================
-// ROS subscription
+// ROS connection callback
 // =============================================================================
 
-void ARobotVisualizer::DoSubscribe()
+void ARobotVisualizer::OnRosBridgeConnected()
+{
+	UE_LOG(LogRosBridge, Log,
+		TEXT("RobotVisualizer: rosbridge connected — subscriptions restored by subsystem."));
+}
+
+// =============================================================================
+// MoveIt topic advertisements
+// =============================================================================
+
+void ARobotVisualizer::AdvertiseMoveItTopics()
 {
 	UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
 	if (!GI) return;
@@ -293,18 +299,112 @@ void ARobotVisualizer::DoSubscribe()
 	URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
 	if (!Ros) return;
 
-	if (!Ros->IsConnected())
+	// These are queued and sent automatically when connected.
+	Ros->Advertise(TEXT("/moveit_goal_named"), TEXT("std_msgs/String"));
+	Ros->Advertise(TEXT("/moveit_goal_joints"), TEXT("sensor_msgs/JointState"));
+	Ros->Advertise(TEXT("/moveit_goal_pose"), TEXT("geometry_msgs/PoseStamped"));
+
+	bMoveItTopicsAdvertised = true;
+	UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: MoveIt command topics advertised."));
+}
+
+// =============================================================================
+// MoveIt commands — SendNamedTarget
+// =============================================================================
+
+void ARobotVisualizer::SendNamedTarget()
+{
+	UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
+	if (!GI) return;
+
+	URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
+	if (!Ros || !Ros->IsConnected())
 	{
-		UE_LOG(LogRosBridge, Warning,
-			TEXT("RobotVisualizer: not connected yet, retrying in %.1fs"), SubscribeDelaySeconds);
-		GetWorld()->GetTimerManager().SetTimer(
-			SubscribeTimerHandle, this, &ARobotVisualizer::DoSubscribe,
-			SubscribeDelaySeconds, false);
+		UE_LOG(LogRosBridge, Warning, TEXT("SendNamedTarget: not connected to rosbridge."));
 		return;
 	}
 
-	Ros->Subscribe(JointStateTopic, JointStateType);
-	UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: subscribed to %s"), *JointStateTopic);
+	// std_msgs/String: {"data": "home"}
+	FString MsgJson = FString::Printf(TEXT("{\"data\":\"%s\"}"), *MoveItNamedTarget);
+	Ros->Publish(TEXT("/moveit_goal_named"), MsgJson);
+
+	UE_LOG(LogRosBridge, Log, TEXT("SendNamedTarget: published '%s' to /moveit_goal_named"), *MoveItNamedTarget);
+}
+
+// =============================================================================
+// MoveIt commands — SendJointGoal
+// =============================================================================
+
+void ARobotVisualizer::SendJointGoal()
+{
+	UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
+	if (!GI) return;
+
+	URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
+	if (!Ros || !Ros->IsConnected())
+	{
+		UE_LOG(LogRosBridge, Warning, TEXT("SendJointGoal: not connected to rosbridge."));
+		return;
+	}
+
+	// sensor_msgs/JointState:
+	// {
+	//   "header": {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": ""},
+	//   "name": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"],
+	//   "position": [0.0, -0.5, 0.5, 0.0, 0.0],
+	//   "velocity": [],
+	//   "effort": []
+	// }
+
+	FString MsgJson = FString::Printf(
+		TEXT("{\"header\":{\"stamp\":{\"sec\":0,\"nanosec\":0},\"frame_id\":\"\"},")
+		TEXT("\"name\":[\"shoulder_pan\",\"shoulder_lift\",\"elbow_flex\",\"wrist_flex\",\"wrist_roll\"],")
+		TEXT("\"position\":[%f,%f,%f,%f,%f],")
+		TEXT("\"velocity\":[],\"effort\":[]}"),
+		GoalShoulderPan, GoalShoulderLift, GoalElbowFlex, GoalWristFlex, GoalWristRoll
+	);
+
+	Ros->Publish(TEXT("/moveit_goal_joints"), MsgJson);
+
+	UE_LOG(LogRosBridge, Log,
+		TEXT("SendJointGoal: [%.3f, %.3f, %.3f, %.3f, %.3f] to /moveit_goal_joints"),
+		GoalShoulderPan, GoalShoulderLift, GoalElbowFlex, GoalWristFlex, GoalWristRoll);
+}
+
+// =============================================================================
+// MoveIt commands — SendPoseGoal
+// =============================================================================
+
+void ARobotVisualizer::SendPoseGoal()
+{
+	UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
+	if (!GI) return;
+
+	URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
+	if (!Ros || !Ros->IsConnected())
+	{
+		UE_LOG(LogRosBridge, Warning, TEXT("SendPoseGoal: not connected to rosbridge."));
+		return;
+	}
+
+	// Convert UE position (cm, left-handed) to ROS (meters, right-handed)
+	double RosX, RosY, RosZ;
+	RosCoordConv::UeToRosPosition(GoalPositionUE, RosX, RosY, RosZ);
+
+	// geometry_msgs/PoseStamped (orientation defaults to identity — position-only goal)
+	FString MsgJson = FString::Printf(
+		TEXT("{\"header\":{\"stamp\":{\"sec\":0,\"nanosec\":0},\"frame_id\":\"base_link\"},")
+		TEXT("\"pose\":{\"position\":{\"x\":%f,\"y\":%f,\"z\":%f},")
+		TEXT("\"orientation\":{\"x\":0.0,\"y\":0.0,\"z\":0.0,\"w\":1.0}}}"),
+		RosX, RosY, RosZ
+	);
+
+	Ros->Publish(TEXT("/moveit_goal_pose"), MsgJson);
+
+	UE_LOG(LogRosBridge, Log,
+		TEXT("SendPoseGoal: UE(%.1f, %.1f, %.1f)cm -> ROS(%.4f, %.4f, %.4f)m to /moveit_goal_pose"),
+		GoalPositionUE.X, GoalPositionUE.Y, GoalPositionUE.Z,
+		RosX, RosY, RosZ);
 }
 
 // =============================================================================
@@ -316,6 +416,10 @@ void ARobotVisualizer::OnRosMessage(const FString& Topic, const FString& Message
 	if (Topic == JointStateTopic)
 	{
 		ParseAndApplyJointStates(MessageJson);
+	}
+	else if (Topic == TEXT("/robot_status"))
+	{
+		OnRobotStatus(Topic, MessageJson);
 	}
 }
 
@@ -349,29 +453,9 @@ void ARobotVisualizer::ParseAndApplyJointStates(const FString& MessageJson)
 		TObjectPtr<USceneComponent>* JointComp = JointComponentMap.Find(JointName);
 		if (JointComp && *JointComp)
 		{
-			// All URDF joints in this robot have axis="0 0 1" (local Z).
-			// Apply the joint angle as a Yaw rotation on top of the base
-			// joint orientation that was set in the constructor.
 			const float AngleDeg = RosCoordConv::RosJointAngleToUeDegrees(AngleRad);
 
-			FRotator CurrentRot = (*JointComp)->GetRelativeRotation();
-			// The base rotation was set in constructor. We need to compose
-			// the joint angle on top. Store base rotation and add joint angle.
-			// For simplicity, since all joints rotate about their local Z,
-			// we add to the Yaw component.
-			//
-			// NOTE: This assumes the URDF base rotation was already applied.
-			// The joint angle rotation is additive on the local Z axis,
-			// which maps to Yaw after the base RPY transform.
-
-			// We need to store base rotations separately to avoid drift.
-			// For now, reconstruct from URDF data each frame.
-			// TODO: Cache base rotations for cleanliness.
-
-			// Get the base rotation that was set for this joint
-			FRotator BaseRot = CurrentRot;  // Will be overwritten properly below
-
-			// Re-derive base rotation from URDF (matches constructor values)
+			FRotator BaseRot;
 			if (JointName == FName("shoulder_pan"))
 				BaseRot = RosCoordConv::RosRpyToUeRotator(3.14159, 0.0, -3.14159);
 			else if (JointName == FName("shoulder_lift"))
@@ -385,12 +469,263 @@ void ARobotVisualizer::ParseAndApplyJointStates(const FString& MessageJson)
 			else if (JointName == FName("gripper"))
 				BaseRot = RosCoordConv::RosRpyToUeRotator(1.5708, 0.0, 0.0);
 
-			// Compose: base rotation, then joint angle about local Z
 			const FQuat BaseQuat = BaseRot.Quaternion();
 			const FQuat JointQuat = FQuat(FVector::UpVector, FMath::DegreesToRadians(AngleDeg));
 			const FQuat FinalQuat = BaseQuat * JointQuat;
 
 			(*JointComp)->SetRelativeRotation(FinalQuat.Rotator());
+		}
+	}
+}
+
+// =============================================================================
+// Record / Replay / E-Stop — Topic setup
+// =============================================================================
+
+void ARobotVisualizer::SetupRecordReplayTopics()
+{
+	UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
+	if (!GI) return;
+
+	URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
+	if (!Ros) return;
+
+	// Advertise the command topic
+	Ros->Advertise(TEXT("/robot_command"), TEXT("std_msgs/String"));
+
+	// Subscribe to status feedback
+	Ros->Subscribe(TEXT("/robot_status"), TEXT("std_msgs/String"));
+
+	bRecordReplayTopicsSetup = true;
+	UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: Record/Replay topics set up."));
+}
+
+// =============================================================================
+// Record / Replay / E-Stop — Command publisher helper
+// =============================================================================
+
+void ARobotVisualizer::PublishRobotCommand(const FString& JsonCmd)
+{
+	UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
+	if (!GI) return;
+
+	URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
+	if (!Ros || !Ros->IsConnected())
+	{
+		UE_LOG(LogRosBridge, Warning, TEXT("PublishRobotCommand: not connected to rosbridge."));
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red,
+				TEXT("Robot: Not connected to rosbridge!"));
+		}
+		return;
+	}
+
+	// std_msgs/String: {"data": "<json_cmd>"}
+	// The JSON command is nested inside the "data" field, with quotes escaped.
+	FString EscapedCmd = JsonCmd.Replace(TEXT("\""), TEXT("\\\""));
+	FString MsgJson = FString::Printf(TEXT("{\"data\":\"%s\"}"), *EscapedCmd);
+	Ros->Publish(TEXT("/robot_command"), MsgJson);
+
+	UE_LOG(LogRosBridge, Log, TEXT("PublishRobotCommand: %s"), *JsonCmd);
+}
+
+// =============================================================================
+// Record / Replay / E-Stop — Button handlers
+// =============================================================================
+
+void ARobotVisualizer::StartRecord()
+{
+	PublishRobotCommand(TEXT("{\"cmd\":\"start_record\"}"));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green,
+			TEXT("Robot: Recording started (teleop active)"));
+	}
+}
+
+void ARobotVisualizer::StopRecord()
+{
+	PublishRobotCommand(TEXT("{\"cmd\":\"stop_record\"}"));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
+			TEXT("Robot: Recording stopped, saving..."));
+	}
+}
+
+void ARobotVisualizer::StartReplay()
+{
+	FString ArgsJson;
+	if (ReplayFilename.IsEmpty())
+	{
+		ArgsJson = FString::Printf(
+			TEXT("{\"cmd\":\"start_replay\",\"args\":{\"loop\":%s,\"approach_speed\":%f}}"),
+			bReplayLoop ? TEXT("true") : TEXT("false"),
+			ApproachSpeed);
+	}
+	else
+	{
+		ArgsJson = FString::Printf(
+			TEXT("{\"cmd\":\"start_replay\",\"args\":{\"filename\":\"%s\",\"loop\":%s,\"approach_speed\":%f}}"),
+			*ReplayFilename,
+			bReplayLoop ? TEXT("true") : TEXT("false"),
+			ApproachSpeed);
+	}
+	PublishRobotCommand(ArgsJson);
+
+	if (GEngine)
+	{
+		FString DisplayName = ReplayFilename.IsEmpty() ? TEXT("(most recent)") : ReplayFilename;
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan,
+			FString::Printf(TEXT("Robot: Replaying %s (loop=%s, speed=%.0f°/s)"),
+				*DisplayName, bReplayLoop ? TEXT("yes") : TEXT("no"), ApproachSpeed));
+	}
+}
+
+void ARobotVisualizer::StopReplay()
+{
+	PublishRobotCommand(TEXT("{\"cmd\":\"stop_replay\"}"));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
+			TEXT("Robot: Replay stopped"));
+	}
+}
+
+void ARobotVisualizer::EStop()
+{
+	PublishRobotCommand(TEXT("{\"cmd\":\"estop\"}"));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red,
+			TEXT("*** E-STOP *** All motion halted"));
+	}
+}
+
+// =============================================================================
+// Teleop Sync — SyncOn / SyncOff
+// =============================================================================
+
+void ARobotVisualizer::SyncOn()
+{
+	PublishRobotCommand(TEXT("{\"cmd\":\"start_teleop\"}"));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green,
+			TEXT("Sync ON: leader -> follower active"));
+	}
+}
+
+void ARobotVisualizer::SyncOff()
+{
+	PublishRobotCommand(TEXT("{\"cmd\":\"stop_teleop\"}"));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
+			TEXT("Sync OFF: leader -> follower deactivated"));
+	}
+}
+
+// =============================================================================
+// Record / Replay — Status feedback handler
+// =============================================================================
+
+void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& MessageJson)
+{
+	// rosbridge wraps std_msgs/String as: {"data": "..."}
+	TSharedPtr<FJsonObject> OuterJson;
+	TSharedRef<TJsonReader<>> OuterReader = TJsonReaderFactory<>::Create(MessageJson);
+	if (!FJsonSerializer::Deserialize(OuterReader, OuterJson) || !OuterJson.IsValid())
+	{
+		return;
+	}
+
+	FString DataStr;
+	if (!OuterJson->TryGetStringField(TEXT("data"), DataStr))
+	{
+		return;
+	}
+
+	// Parse the inner JSON status
+	TSharedPtr<FJsonObject> StatusJson;
+	TSharedRef<TJsonReader<>> StatusReader = TJsonReaderFactory<>::Create(DataStr);
+	if (!FJsonSerializer::Deserialize(StatusReader, StatusJson) || !StatusJson.IsValid())
+	{
+		return;
+	}
+
+	FString State;
+	if (StatusJson->TryGetStringField(TEXT("state"), State))
+	{
+		if (State != WorkerState)
+		{
+			WorkerState = State;
+			UE_LOG(LogRosBridge, Log, TEXT("Worker state: %s"), *WorkerState);
+
+			if (GEngine)
+			{
+				FColor Color = FColor::White;
+				if (State == TEXT("recording")) Color = FColor::Green;
+				else if (State == TEXT("replaying")) Color = FColor::Cyan;
+				else if (State == TEXT("idle")) Color = FColor::Silver;
+
+				GEngine->AddOnScreenDebugMessage(-1, 3.0f, Color,
+					FString::Printf(TEXT("Robot state: %s"), *WorkerState));
+			}
+		}
+	}
+
+	// Update sync (teleop) status
+	bool bTeleop = false;
+	if (StatusJson->TryGetBoolField(TEXT("teleop"), bTeleop))
+	{
+		if (bTeleop != bSyncActive)
+		{
+			bSyncActive = bTeleop;
+			UE_LOG(LogRosBridge, Log, TEXT("Sync (teleop): %s"),
+				bSyncActive ? TEXT("ON") : TEXT("OFF"));
+		}
+	}
+
+	// Log errors from commands
+	FString Status;
+	if (StatusJson->TryGetStringField(TEXT("status"), Status) && Status == TEXT("error"))
+	{
+		FString Reason;
+		StatusJson->TryGetStringField(TEXT("reason"), Reason);
+		UE_LOG(LogRosBridge, Warning, TEXT("Robot command error: %s"), *Reason);
+
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red,
+				FString::Printf(TEXT("Robot error: %s"), *Reason));
+		}
+	}
+
+	// Log recording saved info
+	FString Filename;
+	if (StatusJson->TryGetStringField(TEXT("filename"), Filename) && !Filename.IsEmpty())
+	{
+		int32 Frames = 0;
+		StatusJson->TryGetNumberField(TEXT("frames"), Frames);
+		double Duration = 0.0;
+		StatusJson->TryGetNumberField(TEXT("duration_sec"), Duration);
+
+		UE_LOG(LogRosBridge, Log, TEXT("Recording saved: %s (%d frames, %.1fs)"),
+			*Filename, Frames, Duration);
+
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+				FString::Printf(TEXT("Recording saved: %s (%d frames, %.1fs)"),
+					*Filename, Frames, Duration));
 		}
 	}
 }

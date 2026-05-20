@@ -10,7 +10,8 @@ class USceneComponent;
 class URosBridgeSubsystem;
 
 /**
- * Visualizes the SO-ARM-101 follower arm in Unreal Engine.
+ * Visualizes the SO-ARM-101 follower arm in Unreal Engine and provides
+ * MoveIt command interface via rosbridge.
  *
  * The component hierarchy mirrors the URDF link/joint structure:
  *   BaseLink -> ShoulderPanJoint -> ShoulderLink -> ShoulderLiftJoint -> ...
@@ -18,13 +19,20 @@ class URosBridgeSubsystem;
  * Each "Joint" SceneComponent is where the ROS joint angle gets applied
  * as a local Z-axis rotation. All child links/meshes rotate with it.
  *
- * Mesh offsets and joint origins are hardcoded from the URDF
- * (so101_follower.urdf), converted to UE coordinates (cm, left-handed).
+ * Phase 8 additions:
+ *   - SendNamedTarget(): publish to /moveit_goal_named (std_msgs/String)
+ *   - SendJointGoal(): publish to /moveit_goal_joints (sensor_msgs/JointState)
+ *   - SendPoseGoal(): publish to /moveit_goal_pose (geometry_msgs/PoseStamped)
+ *   - Blueprint-callable + editor-testable via UPROPERTY buttons
  *
- * Usage:
- *   1. Place this actor in the level
- *   2. It auto-connects to rosbridge and subscribes to /joint_states
- *   3. Moving the real robot updates the 3D model in real time
+ * Phase 9 additions (Record/Replay/E-Stop):
+ *   - StartRecord(): begin teleop recording on worker
+ *   - StopRecord(): stop recording, save trajectory
+ *   - StartReplay(): replay most recent (or named) recording
+ *   - StopReplay(): stop replay
+ *   - EStop(): emergency stop all motion
+ *   - All commands publish JSON to /robot_command topic
+ *   - Worker state feedback via /robot_status subscription
  */
 UCLASS()
 class SO101_TWIN_API ARobotVisualizer : public AActor
@@ -38,7 +46,9 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	// --- Configuration ---
+	// =================================================================
+	// Configuration
+	// =================================================================
 
 	UPROPERTY(EditAnywhere, Category = "ROS|Bridge")
 	FString RosBridgeUrl = TEXT("ws://127.0.0.1:9090/?x=1");
@@ -49,17 +59,119 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "ROS|Topics")
 	FString JointStateType = TEXT("sensor_msgs/JointState");
 
-	UPROPERTY(EditAnywhere, Category = "ROS|Bridge")
-	float SubscribeDelaySeconds = 1.0f;
+	// =================================================================
+	// MoveIt Command Interface (Phase 8)
+	// =================================================================
+
+	// --- Named target ---
+
+	/** Named target to send (e.g. "home", "ready"). Set in Details panel, then call SendNamedTarget(). */
+	UPROPERTY(EditAnywhere, Category = "ROS|MoveIt")
+	FString MoveItNamedTarget = TEXT("home");
+
+	/** Send the named target to MoveIt via /moveit_goal_named topic. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|MoveIt")
+	void SendNamedTarget();
+
+	// --- Joint goal ---
+
+	/** Joint goal values in radians. Set in Details panel, then call SendJointGoal(). */
+	UPROPERTY(EditAnywhere, Category = "ROS|MoveIt|Joints")
+	float GoalShoulderPan = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ROS|MoveIt|Joints")
+	float GoalShoulderLift = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ROS|MoveIt|Joints")
+	float GoalElbowFlex = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ROS|MoveIt|Joints")
+	float GoalWristFlex = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ROS|MoveIt|Joints")
+	float GoalWristRoll = 0.0f;
+
+	/** Send joint goal to MoveIt via /moveit_goal_joints topic. Values are in radians. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|MoveIt|Joints")
+	void SendJointGoal();
+
+	// --- Pose goal (Cartesian, position-only for 5DOF) ---
+
+	/** Target position in UE coordinates (cm). Converted to ROS (meters) on send. */
+	UPROPERTY(EditAnywhere, Category = "ROS|MoveIt|Pose")
+	FVector GoalPositionUE = FVector(10.0f, 0.0f, 15.0f);
+
+	/** Send position-only goal to MoveIt via /moveit_goal_pose topic.
+	 *  GoalPositionUE is in Unreal cm, auto-converted to ROS meters with Y flip. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|MoveIt|Pose")
+	void SendPoseGoal();
+
+	// =================================================================
+	// Teleop Sync (Phase 9)
+	// =================================================================
+
+	/** Activate leader→follower sync (teleop). Must be ON before recording. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|Sync")
+	void SyncOn();
+
+	/** Deactivate leader→follower sync. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|Sync")
+	void SyncOff();
+
+	/** Whether teleop (sync) is currently active. Updated from /robot_status. */
+	UPROPERTY(VisibleAnywhere, Category = "ROS|Status")
+	bool bSyncActive = false;
+
+	// =================================================================
+	// Record / Replay / E-Stop (Phase 9)
+	// =================================================================
+
+	/** Start recording: activates teleop on worker, buffers joint trajectory. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|Record")
+	void StartRecord();
+
+	/** Stop recording: saves trajectory to file on worker. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|Record")
+	void StopRecord();
+
+	/** Replay filename (empty = most recent recording). */
+	UPROPERTY(EditAnywhere, Category = "ROS|Replay")
+	FString ReplayFilename;
+
+	/** Whether to loop the replay continuously. */
+	UPROPERTY(EditAnywhere, Category = "ROS|Replay")
+	bool bReplayLoop = false;
+
+	/** Approach speed in degrees/sec. Controls how fast the robot moves
+	 *  to the start position before replay begins. Lower = smoother. */
+	UPROPERTY(EditAnywhere, Category = "ROS|Replay", meta = (ClampMin = "5.0", ClampMax = "300.0"))
+	float ApproachSpeed = 45.0f;
+
+	/** Start replaying a recorded trajectory on the follower arm. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|Replay")
+	void StartReplay();
+
+	/** Stop replay immediately. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|Replay")
+	void StopReplay();
+
+	/** Emergency stop: abort ALL motion immediately (recording, replay, teleop). */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "ROS|Safety")
+	void EStop();
+
+	/** Current worker state (idle/recording/replaying). Updated from /robot_status. */
+	UPROPERTY(VisibleAnywhere, Category = "ROS|Status")
+	FString WorkerState = TEXT("unknown");
 
 private:
-	// --- Component hierarchy ---
+	// =================================================================
+	// Component hierarchy
+	// =================================================================
 
-	// Root
 	UPROPERTY(VisibleAnywhere, Category = "Robot")
 	TObjectPtr<USceneComponent> RobotRoot;
 
-	// Link SceneComponents (parent for mesh offsets)
+	// Link SceneComponents
 	UPROPERTY(VisibleAnywhere, Category = "Robot|Links")
 	TObjectPtr<USceneComponent> BaseLink;
 
@@ -81,7 +193,7 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Robot|Links")
 	TObjectPtr<USceneComponent> MovingJawLink;
 
-	// Joint SceneComponents (rotation applied here)
+	// Joint SceneComponents
 	UPROPERTY(VisibleAnywhere, Category = "Robot|Joints")
 	TObjectPtr<USceneComponent> ShoulderPanJoint;
 
@@ -100,34 +212,62 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Robot|Joints")
 	TObjectPtr<USceneComponent> GripperJoint;
 
-	// --- Joint name → component mapping ---
+	// Joint name -> component mapping
 	UPROPERTY()
 	TMap<FName, TObjectPtr<USceneComponent>> JointComponentMap;
 
-	// --- Mesh components (for material assignment etc.) ---
+	// Mesh components
 	UPROPERTY()
 	TArray<TObjectPtr<UStaticMeshComponent>> AllMeshComponents;
 
-	// --- ROS connection ---
-	FTimerHandle SubscribeTimerHandle;
+	// =================================================================
+	// ROS connection
+	// =================================================================
 
-	void DoSubscribe();
+	UFUNCTION()
+	void OnRosBridgeConnected();
 
 	UFUNCTION()
 	void OnRosMessage(const FString& Topic, const FString& MessageJson);
 
 	void ParseAndApplyJointStates(const FString& MessageJson);
 
-	// --- Helpers ---
+	// =================================================================
+	// MoveIt publish helpers
+	// =================================================================
 
-	/** Create a SceneComponent with a relative transform (already in UE coordinates). */
+	/** Advertise MoveIt command topics. Called once on connect. */
+	void AdvertiseMoveItTopics();
+
+	/** Whether MoveIt topics have been advertised in this connection session. */
+	bool bMoveItTopicsAdvertised = false;
+
+	// =================================================================
+	// Record / Replay / E-Stop helpers
+	// =================================================================
+
+	/** Advertise /robot_command and subscribe /robot_status. Called once on connect. */
+	void SetupRecordReplayTopics();
+
+	/** Whether record/replay topics have been set up. */
+	bool bRecordReplayTopicsSetup = false;
+
+	/** Send a JSON command to /robot_command topic. */
+	void PublishRobotCommand(const FString& JsonCmd);
+
+	/** Handle /robot_status messages from the bridge node. */
+	UFUNCTION()
+	void OnRobotStatus(const FString& Topic, const FString& MessageJson);
+
+	// =================================================================
+	// Helpers (declared in original header, kept for compatibility)
+	// =================================================================
+
 	USceneComponent* CreateJointComponent(const FName& Name, USceneComponent* Parent,
 		const FVector& Location, const FRotator& Rotation);
 
-	/** Create a SceneComponent as a link container. */
 	USceneComponent* CreateLinkComponent(const FName& Name, USceneComponent* Parent);
 
-	/** Attach a StaticMeshComponent to a link with the given mesh offset (UE coordinates). */
 	UStaticMeshComponent* AttachMesh(USceneComponent* Parent, UStaticMesh* Mesh,
 		const FName& Name, const FVector& Location, const FRotator& Rotation,
 		bool bIsMotor);

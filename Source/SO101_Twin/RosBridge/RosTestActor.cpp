@@ -1,10 +1,10 @@
-﻿#include "RosTestActor.h"
+#include "RosTestActor.h"
 #include "RosBridgeSubsystem.h"
 #include "RosBridgeLog.h"
 
-#include "Engine/Engine.h"       // GEngine
-#include "Engine/World.h"        // GetWorld
-#include "TimerManager.h"        // FTimerManager
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 
 ARosTestActor::ARosTestActor()
@@ -17,58 +17,71 @@ void ARosTestActor::BeginPlay()
     Super::BeginPlay();
 
     UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
-    if (!GI)
-    {
-        UE_LOG(LogRosBridge, Error, TEXT("RosTestActor: no GameInstance"));
-        return;
-    }
+    if (!GI) return;
 
     URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
-    if (!Ros)
+    if (!Ros) return;
+
+    // Bind delegates.
+    Ros->OnTopicMessage.AddDynamic(this, &ARosTestActor::OnRosMessage);
+    Ros->OnConnected.AddDynamic(this, &ARosTestActor::OnRosBridgeConnected);
+
+    // Queue subscribe — sent automatically when connected.
+    Ros->Subscribe(TopicName, TopicType);
+
+    // Queue advertise for publish test.
+    if (bEnablePublishTest)
     {
-        UE_LOG(LogRosBridge, Error, TEXT("RosTestActor: RosBridgeSubsystem not found"));
-        return;
+        Ros->Advertise(PublishTopicName, PublishTopicType);
     }
 
-    // Bind the delegate BEFORE connecting so we do not miss early messages.
-    Ros->OnTopicMessage.AddDynamic(this, &ARosTestActor::OnRosMessage);
-
+    // Initiate connection if not already connected.
     if (!Ros->IsConnected())
     {
         Ros->Connect(RosBridgeUrl);
     }
-
-    // Connect is asynchronous. Schedule the subscribe call slightly later so
-    // the WebSocket handshake has a chance to finish. This is a minimal
-    // approach — a more robust version would wait for an "on connected" event.
-    GetWorld()->GetTimerManager().SetTimer(
-        SubscribeTimerHandle,
-        this,
-        &ARosTestActor::DoSubscribe,
-        SubscribeDelaySeconds,
-        false // not looping
-    );
 }
 
 void ARosTestActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    // Stop publish timer.
+    if (GetWorld())
+    {
+        GetWorld()->GetTimerManager().ClearTimer(PublishTimerHandle);
+    }
+
+    // Unbind delegates.
     if (UGameInstance* GI = UGameplayStatics::GetGameInstance(this))
     {
         if (URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>())
         {
             Ros->OnTopicMessage.RemoveDynamic(this, &ARosTestActor::OnRosMessage);
+            Ros->OnConnected.RemoveDynamic(this, &ARosTestActor::OnRosBridgeConnected);
         }
-    }
-
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(SubscribeTimerHandle);
     }
 
     Super::EndPlay(EndPlayReason);
 }
 
-void ARosTestActor::DoSubscribe()
+void ARosTestActor::OnRosBridgeConnected()
+{
+    UE_LOG(LogRosBridge, Log, TEXT("RosTestActor: connected — starting publish timer"));
+
+    // Start repeating publish timer.
+    if (bEnablePublishTest && GetWorld())
+    {
+        PublishCounter = 0;
+        GetWorld()->GetTimerManager().SetTimer(
+            PublishTimerHandle,
+            this,
+            &ARosTestActor::PublishTestMessage,
+            PublishIntervalSeconds,
+            true  // looping
+        );
+    }
+}
+
+void ARosTestActor::PublishTestMessage()
 {
     UGameInstance* GI = UGameplayStatics::GetGameInstance(this);
     if (!GI) return;
@@ -76,23 +89,14 @@ void ARosTestActor::DoSubscribe()
     URosBridgeSubsystem* Ros = GI->GetSubsystem<URosBridgeSubsystem>();
     if (!Ros) return;
 
-    if (!Ros->IsConnected())
-    {
-        UE_LOG(LogRosBridge, Warning,
-            TEXT("RosTestActor: not connected yet, retrying subscribe in %.1fs"),
-            SubscribeDelaySeconds);
+    // Build std_msgs/String JSON: {"data": "Hello from Unreal #42"}
+    const FString Msg = FString::Printf(
+        TEXT("{\"data\": \"Hello from Unreal #%d\"}"), PublishCounter);
 
-        // Retry once more.
-        GetWorld()->GetTimerManager().SetTimer(
-            SubscribeTimerHandle,
-            this,
-            &ARosTestActor::DoSubscribe,
-            SubscribeDelaySeconds,
-            false);
-        return;
-    }
+    Ros->Publish(PublishTopicName, Msg);
 
-    Ros->Subscribe(TopicName, TopicType);
+    UE_LOG(LogRosBridge, Log, TEXT("Published to %s: %s"), *PublishTopicName, *Msg);
+    PublishCounter++;
 }
 
 void ARosTestActor::OnRosMessage(const FString& Topic, const FString& MessageJson)
@@ -102,11 +106,6 @@ void ARosTestActor::OnRosMessage(const FString& Topic, const FString& MessageJso
     if (GEngine)
     {
         const FString ScreenMsg = FString::Printf(TEXT("%s: %s"), *Topic, *MessageJson);
-        GEngine->AddOnScreenDebugMessage(
-            -1,        // key (-1 means always add a new line)
-            2.0f,      // display time in seconds
-            FColor::Green,
-            ScreenMsg
-        );
+        GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, ScreenMsg);
     }
 }
