@@ -233,6 +233,7 @@ void ARobotVisualizer::BeginPlay()
 	// Bind delegates.
 	Ros->OnTopicMessage.AddDynamic(this, &ARobotVisualizer::OnRosMessage);
 	Ros->OnConnected.AddDynamic(this, &ARobotVisualizer::OnRosBridgeConnected);
+	Ros->OnDisconnected.AddDynamic(this, &ARobotVisualizer::OnRosBridgeDisconnected);
 
 	// Subscribe is now queued even before connection — the subsystem will
 	// send it automatically when connected (including on reconnect).
@@ -243,6 +244,17 @@ void ARobotVisualizer::BeginPlay()
 
 	// Queue record/replay/estop topics.
 	SetupRecordReplayTopics();
+
+	// Subscribe to bridge heartbeat for connection health monitoring.
+	Ros->Subscribe(TEXT("/bridge_heartbeat"), TEXT("std_msgs/String"));
+
+	// Start connection health monitor (checks every 2 seconds).
+	const double Now = FPlatformTime::Seconds();
+	LastBridgeHeartbeatTime = Now;
+	LastJointStatesTime = Now;
+	GetWorldTimerManager().SetTimer(
+		ConnectionHealthTimerHandle, this,
+		&ARobotVisualizer::CheckConnectionHealth, 2.0f, true);
 
 	// Initiate connection if not already connected.
 	if (!Ros->IsConnected())
@@ -268,11 +280,14 @@ void ARobotVisualizer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		{
 			Ros->OnTopicMessage.RemoveDynamic(this, &ARobotVisualizer::OnRosMessage);
 			Ros->OnConnected.RemoveDynamic(this, &ARobotVisualizer::OnRosBridgeConnected);
+			Ros->OnDisconnected.RemoveDynamic(this, &ARobotVisualizer::OnRosBridgeDisconnected);
 		}
 	}
 
 	bMoveItTopicsAdvertised = false;
 	bRecordReplayTopicsSetup = false;
+
+	GetWorldTimerManager().ClearTimer(ConnectionHealthTimerHandle);
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -283,8 +298,90 @@ void ARobotVisualizer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void ARobotVisualizer::OnRosBridgeConnected()
 {
+	bRosBridgeConnected = true;
 	UE_LOG(LogRosBridge, Log,
 		TEXT("RobotVisualizer: rosbridge connected — subscriptions restored by subsystem."));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+			TEXT("ROS Bridge: Connected"));
+	}
+}
+
+// =============================================================================
+// ROS disconnection callback
+// =============================================================================
+
+void ARobotVisualizer::OnRosBridgeDisconnected()
+{
+	bRosBridgeConnected = false;
+	WorkerState = TEXT("disconnected");
+
+	UE_LOG(LogRosBridge, Warning,
+		TEXT("RobotVisualizer: rosbridge DISCONNECTED — cannot send commands. Auto-reconnect active."));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red,
+			TEXT("*** ROS Bridge DISCONNECTED *** Cannot send commands. Reconnecting..."));
+	}
+}
+
+// =============================================================================
+// Connection health monitoring
+// =============================================================================
+
+void ARobotVisualizer::CheckConnectionHealth()
+{
+	// Only check when WebSocket is connected — if WebSocket is down,
+	// OnRosBridgeDisconnected already shows a warning for that.
+	if (!bRosBridgeConnected)
+	{
+		return;
+	}
+
+	const double Now = FPlatformTime::Seconds();
+
+	// Check bridge heartbeat (published every 1s by bridge_node)
+	const double BridgeElapsed = Now - LastBridgeHeartbeatTime;
+	if (BridgeElapsed > BridgeHeartbeatTimeoutSec && !bBridgeHeartbeatLost)
+	{
+		bBridgeHeartbeatLost = true;
+		bWorkerDataLost = true;  // if bridge is down, worker data can't reach us either
+		WorkerState = TEXT("bridge lost");
+
+		UE_LOG(LogRosBridge, Warning,
+			TEXT("Bridge heartbeat lost (%.1fs). bridge_node may be down."), BridgeElapsed);
+
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red,
+				TEXT("*** Bridge Node: DOWN *** Check bridge_node terminal (terminal 2)."));
+		}
+		return;  // no need to check worker separately
+	}
+
+	// Check worker data (/joint_states at ~30Hz, flows through bridge)
+	// Only meaningful if bridge is alive.
+	if (!bBridgeHeartbeatLost)
+	{
+		const double WorkerElapsed = Now - LastJointStatesTime;
+		if (WorkerElapsed > WorkerDataTimeoutSec && !bWorkerDataLost)
+		{
+			bWorkerDataLost = true;
+			WorkerState = TEXT("worker lost");
+
+			UE_LOG(LogRosBridge, Warning,
+				TEXT("Worker data lost (%.1fs). lerobot_worker may be down."), WorkerElapsed);
+
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red,
+					TEXT("*** Worker: DOWN *** Check lerobot_worker terminal (terminal 1)."));
+			}
+		}
+	}
 }
 
 // =============================================================================
@@ -415,7 +512,47 @@ void ARobotVisualizer::OnRosMessage(const FString& Topic, const FString& Message
 {
 	if (Topic == JointStateTopic)
 	{
+		// /joint_states arrives at ~30Hz — proves both bridge AND worker are alive.
+		LastJointStatesTime = FPlatformTime::Seconds();
+		LastBridgeHeartbeatTime = LastJointStatesTime; // joint_states flows through bridge
+		if (bWorkerDataLost)
+		{
+			bWorkerDataLost = false;
+			UE_LOG(LogRosBridge, Log, TEXT("Worker data restored."));
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+					TEXT("Worker: Connection restored"));
+			}
+		}
+		if (bBridgeHeartbeatLost)
+		{
+			bBridgeHeartbeatLost = false;
+			UE_LOG(LogRosBridge, Log, TEXT("Bridge heartbeat restored (via joint_states)."));
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+					TEXT("Bridge: Connection restored"));
+			}
+		}
+
 		ParseAndApplyJointStates(MessageJson);
+	}
+	else if (Topic == TEXT("/bridge_heartbeat"))
+	{
+		// Bridge heartbeat arrives every 1s — proves bridge is alive
+		// (but worker may still be dead if /joint_states is not arriving).
+		LastBridgeHeartbeatTime = FPlatformTime::Seconds();
+		if (bBridgeHeartbeatLost)
+		{
+			bBridgeHeartbeatLost = false;
+			UE_LOG(LogRosBridge, Log, TEXT("Bridge heartbeat restored."));
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+					TEXT("Bridge: Connection restored"));
+			}
+		}
 	}
 	else if (Topic == TEXT("/robot_status"))
 	{
@@ -639,6 +776,30 @@ void ARobotVisualizer::SyncOff()
 
 void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& MessageJson)
 {
+	// /robot_status flows through bridge from worker — both are alive.
+	const double Now = FPlatformTime::Seconds();
+	LastBridgeHeartbeatTime = Now;
+	LastJointStatesTime = Now;
+
+	if (bBridgeHeartbeatLost)
+	{
+		bBridgeHeartbeatLost = false;
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+				TEXT("Bridge: Connection restored"));
+		}
+	}
+	if (bWorkerDataLost)
+	{
+		bWorkerDataLost = false;
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+				TEXT("Worker: Connection restored"));
+		}
+	}
+
 	// rosbridge wraps std_msgs/String as: {"data": "..."}
 	TSharedPtr<FJsonObject> OuterJson;
 	TSharedRef<TJsonReader<>> OuterReader = TJsonReaderFactory<>::Create(MessageJson);
@@ -726,6 +887,64 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
 				FString::Printf(TEXT("Recording saved: %s (%d frames, %.1fs)"),
 					*Filename, Frames, Duration));
+		}
+	}
+
+	// Display device-level errors (USB disconnection, serial errors)
+	const TSharedPtr<FJsonObject>* DeviceErrors = nullptr;
+	bool bHasDeviceErrors = StatusJson->TryGetObjectField(TEXT("device_errors"), DeviceErrors) && DeviceErrors;
+
+	// Check follower error
+	FString FollowerErr;
+	if (bHasDeviceErrors)
+	{
+		(*DeviceErrors)->TryGetStringField(TEXT("follower"), FollowerErr);
+	}
+	if (!FollowerErr.IsEmpty() && !bFollowerDeviceError)
+	{
+		bFollowerDeviceError = true;
+		UE_LOG(LogRosBridge, Error, TEXT("Follower USB error: %s"), *FollowerErr);
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red,
+				TEXT("*** Follower: USB/Serial ERROR *** Check USB connection."));
+		}
+	}
+	else if (FollowerErr.IsEmpty() && bFollowerDeviceError)
+	{
+		bFollowerDeviceError = false;
+		UE_LOG(LogRosBridge, Log, TEXT("Follower USB restored."));
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+				TEXT("Follower: USB connection restored"));
+		}
+	}
+
+	// Check leader error
+	FString LeaderErr;
+	if (bHasDeviceErrors)
+	{
+		(*DeviceErrors)->TryGetStringField(TEXT("leader"), LeaderErr);
+	}
+	if (!LeaderErr.IsEmpty() && !bLeaderDeviceError)
+	{
+		bLeaderDeviceError = true;
+		UE_LOG(LogRosBridge, Error, TEXT("Leader USB error: %s"), *LeaderErr);
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red,
+				TEXT("*** Leader: USB/Serial ERROR *** Check USB connection."));
+		}
+	}
+	else if (LeaderErr.IsEmpty() && bLeaderDeviceError)
+	{
+		bLeaderDeviceError = false;
+		UE_LOG(LogRosBridge, Log, TEXT("Leader USB restored."));
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+				TEXT("Leader: USB connection restored"));
 		}
 	}
 }

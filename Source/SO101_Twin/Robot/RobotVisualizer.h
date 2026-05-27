@@ -228,7 +228,13 @@ private:
 	void OnRosBridgeConnected();
 
 	UFUNCTION()
+	void OnRosBridgeDisconnected();
+
+	UFUNCTION()
 	void OnRosMessage(const FString& Topic, const FString& MessageJson);
+
+	/** Tracks rosbridge connection state for viewport warnings. */
+	bool bRosBridgeConnected = false;
 
 	void ParseAndApplyJointStates(const FString& MessageJson);
 
@@ -258,6 +264,38 @@ private:
 	/** Handle /robot_status messages from the bridge node. */
 	UFUNCTION()
 	void OnRobotStatus(const FString& Topic, const FString& MessageJson);
+
+	// =================================================================
+	// Connection health monitoring (Unreal-side)
+	// =================================================================
+
+	/** Called periodically to check bridge and worker heartbeats. */
+	void CheckConnectionHealth();
+
+	/** Timer handle for health check. */
+	FTimerHandle ConnectionHealthTimerHandle;
+
+	/** Last time we received /bridge_heartbeat. */
+	double LastBridgeHeartbeatTime = 0.0;
+
+	/** Last time we received /joint_states (worker data via bridge). */
+	double LastJointStatesTime = 0.0;
+
+	/** Timeout in seconds for bridge heartbeat (bridge publishes every 1s). */
+	float BridgeHeartbeatTimeoutSec = 4.0f;
+
+	/** Timeout in seconds for worker data (/joint_states at 30Hz). */
+	float WorkerDataTimeoutSec = 3.0f;
+
+	/** Whether bridge heartbeat has been lost. */
+	bool bBridgeHeartbeatLost = false;
+
+	/** Whether worker data has been lost. */
+	bool bWorkerDataLost = false;
+
+	/** Tracks device-level USB/serial error state for recovery messages. */
+	bool bFollowerDeviceError = false;
+	bool bLeaderDeviceError = false;
 
 	// =================================================================
 	// Helpers (declared in original header, kept for compatibility)
