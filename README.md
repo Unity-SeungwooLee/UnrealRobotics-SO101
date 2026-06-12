@@ -23,15 +23,15 @@ https://github.com/user-attachments/assets/ee9b3665-4707-4325-a5c6-124dd7ed0e11
 ## Architecture
 
 ```
-┌─────────────────────────────┐        WebSocket (ws://localhost:9090)
-│  Windows 11                 │ ◄──────────────────────────────────────►
-│                             │
-│  Unreal Engine 5.4.4        │        ┌─────────────────────────────┐
-│  SO101_Twin                 │        │  WSL2 (Ubuntu)              │
-│  · URosBridgeSubsystem      │        │  ROS2 humble                │
-│  · Robot visualization      │        │  SO-ARM-101 drivers         │
-│  · rosbridge v2 client      │        │  rosbridge_suite            │
-└─────────────────────────────┘        └─────────────────────────────┘
+┌─────────────────────────────┐      WebSocket (ws://localhost:9090)     ┌─────────────────────────────┐
+│  Windows 11                 │ ◄──────────────────────────────────────► │  WSL2 (Ubuntu)              │
+│                             │                                          │  ROS2 humble                │
+│  Unreal Engine 5.4.4        │                                          │  SO-ARM-101 drivers         │
+│  SO101_Twin                 │                                          │  rosbridge_suite            │
+│  · URosBridgeSubsystem      │                                          └─────────────────────────────┘
+│  · Robot visualization      │      
+│  · rosbridge v2 client      │      
+└─────────────────────────────┘       
 ```
 
 - **UE → ROS2**: 제어 명령 publish (`/cmd_vel` 등)
@@ -67,7 +67,7 @@ networkingMode=mirrored
 
 ---
 
-## Setup
+## Setup (작성 중)
 
 ### 1. Clone & open in Unreal
 
