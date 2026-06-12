@@ -3,6 +3,8 @@
 Unreal Engine 5.4 기반 **SO-ARM-101 로봇 디지털 트윈** 클라이언트.  
 실물 로봇 ↔ Unreal 양방향 Sim-to-Real 디지털 트윈 (개인 프로젝트, 진행 중)
 
+https://github.com/user-attachments/assets/41278562-b763-4921-953c-f5606dfdc79b
+
 Stack: ROS2 Humble · MoveIt 2 · Unreal Engine 5.4.4 (C++) · LeRobot · ZeroMQ · rosbridge · WSL2/Ubuntu
 
 - **양방향 Sim-to-Real 파이프라인 구축**: 실물 SO-ARM-101(6축 서보 암)의 관절 상태를 30Hz로 Unreal 디지털 트윈에 실시간 반영하고, Unreal에서 지정한 목표 동작을 실물 로봇으로 하달하는 양방향 흐름을 처음부터 직접 구현.
