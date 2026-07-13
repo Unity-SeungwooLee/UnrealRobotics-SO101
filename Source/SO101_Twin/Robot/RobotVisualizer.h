@@ -2,12 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Templates/SubclassOf.h"
 #include "RobotVisualizer.generated.h"
 
 class UStaticMesh;
 class UStaticMeshComponent;
 class USceneComponent;
 class URosBridgeSubsystem;
+class URobotControlWidget;
 
 /**
  * Visualizes the SO-ARM-101 follower arm in Unreal Engine and provides
@@ -34,6 +36,17 @@ class URosBridgeSubsystem;
  *   - All commands publish JSON to /robot_command topic
  *   - Worker state feedback via /robot_status subscription
  */
+USTRUCT(BlueprintType)
+struct FRecordingInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "ROS|UI") FString Filename;
+	UPROPERTY(BlueprintReadOnly, Category = "ROS|UI") int32 Frames = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "ROS|UI") float DurationSec = 0.0f;
+	UPROPERTY(BlueprintReadOnly, Category = "ROS|UI") FString RecordedAt;
+};
+
 UCLASS()
 class SO101_TWIN_API ARobotVisualizer : public AActor
 {
@@ -41,6 +54,44 @@ class SO101_TWIN_API ARobotVisualizer : public AActor
 
 public:
 	ARobotVisualizer();
+	// =================================================================
+	// Phase 10 — Widget-facing API
+	// =================================================================
+
+	/** Widget Blueprint to spawn into the viewport on BeginPlay.
+	 *  Set this to WBP_RobotControl in this actor's Details panel. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ROS|UI")
+	TSubclassOf<URobotControlWidget> ControlWidgetClass;
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	FString GetWorkerState() const { return WorkerState; }
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	bool IsSyncActive() const { return bSyncActive; }
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	bool IsRosBridgeConnected() const { return bRosBridgeConnected; }
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	bool IsBridgeNodeAlive() const { return bRosBridgeConnected && !bBridgeHeartbeatLost; }
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	bool IsWorkerAlive() const { return bRosBridgeConnected && !bBridgeHeartbeatLost && !bWorkerDataLost; }
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	bool HasFollowerError() const { return bFollowerDeviceError; }
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	bool HasLeaderError() const { return bLeaderDeviceError; }
+
+	/** The control widget may read protected state and call commands directly. */
+	friend class URobotControlWidget;
+
+	const TArray<FRecordingInfo>& GetRecordings() const { return Recordings; }
+	int32 GetRecordingsVersion() const { return RecordingsVersion; }
+	int32 GetReplayIndex() const { return ReplayIndex; }
+	int32 GetReplayTotal() const { return ReplayTotal; }
+	bool IsReplayApproaching() const { return bReplayApproaching; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -296,6 +347,18 @@ private:
 	/** Tracks device-level USB/serial error state for recovery messages. */
 	bool bFollowerDeviceError = false;
 	bool bLeaderDeviceError = false;
+
+	/** The viewport control UI widget instance (Phase 10). */
+	UPROPERTY(Transient)
+	TObjectPtr<URobotControlWidget> ControlWidget;
+
+	TArray<FRecordingInfo> Recordings;
+	TArray<FRecordingInfo> PendingRecordings;
+	int32 RecordingsVersion = 0;
+	int32 ReplayIndex = 0;
+	int32 ReplayTotal = 0;
+	FString ReplayProgFilename;
+	bool bReplayApproaching = false;
 
 	// =================================================================
 	// Helpers (declared in original header, kept for compatibility)

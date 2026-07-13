@@ -141,7 +141,7 @@ $shRosbridge = @'
 source ~/.so101_launch/_common.sh
 echo "=== [rosbridge] WebSocket Server :9090 ==="
 ros2_env
-ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml max_message_size:=10000000
 exec bash
 '@
 

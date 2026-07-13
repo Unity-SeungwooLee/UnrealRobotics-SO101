@@ -192,4 +192,7 @@ private:
     /** Topics we have advertised, kept so we can re-advertise on reconnect. */
     UPROPERTY()
     TMap<FString, FString> AdvertisedTopics;
+
+    /** Reassembly buffers for rosbridge "fragment" messages, keyed by fragment id. */
+    TMap<FString, TArray<FString>> FragmentBuffers;
 };

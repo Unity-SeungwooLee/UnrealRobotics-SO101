@@ -15,6 +15,9 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "UObject/ConstructorHelpers.h"
+#include "GameFramework/PlayerController.h"
+#include "Blueprint/UserWidget.h"
+#include "RobotControlWidget.h"
 
 // =============================================================================
 // Mesh asset path helper
@@ -266,6 +269,20 @@ void ARobotVisualizer::BeginPlay()
 		// Already connected (e.g. another actor already called Connect).
 		UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: already connected, subscription sent."));
 	}
+
+	// --- Spawn the in-viewport control UI (Phase 10) ---
+	if (ControlWidgetClass)
+	{
+		if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+		{
+			ControlWidget = CreateWidget<URobotControlWidget>(PC, ControlWidgetClass);
+			if (ControlWidget)
+			{
+				ControlWidget->AddToViewport();
+				UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: control widget added to viewport."));
+			}
+		}
+	}
 }
 
 // =============================================================================
@@ -288,6 +305,12 @@ void ARobotVisualizer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	bRecordReplayTopicsSetup = false;
 
 	GetWorldTimerManager().ClearTimer(ConnectionHealthTimerHandle);
+
+	if (ControlWidget)
+	{
+		ControlWidget->RemoveFromParent();
+		ControlWidget = nullptr;
+	}
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -888,6 +911,82 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 				FString::Printf(TEXT("Recording saved: %s (%d frames, %.1fs)"),
 					*Filename, Frames, Duration));
 		}
+	}
+
+	// --- Recordings list (reply to list_recordings) ---
+	const TArray<TSharedPtr<FJsonValue>>* RecArray = nullptr;
+	if (StatusJson->TryGetArrayField(TEXT("recordings"), RecArray) && RecArray)
+	{
+		Recordings.Reset();
+		for (const TSharedPtr<FJsonValue>& V : *RecArray)
+		{
+			const TSharedPtr<FJsonObject> RecObj = V->AsObject();
+			if (RecObj.IsValid())
+			{
+				FRecordingInfo Info;
+				RecObj->TryGetStringField(TEXT("filename"), Info.Filename);
+				RecObj->TryGetNumberField(TEXT("frames"), Info.Frames);
+				double Dur = 0.0;
+				RecObj->TryGetNumberField(TEXT("duration_sec"), Dur);
+				Info.DurationSec = static_cast<float>(Dur);
+				RecObj->TryGetStringField(TEXT("recorded_at"), Info.RecordedAt);
+				Recordings.Add(Info);
+			}
+		}
+		++RecordingsVersion;
+		UE_LOG(LogRosBridge, Log, TEXT("Recordings list updated: %d files"), Recordings.Num());
+	}
+
+	// --- Recordings list, per-item (split to avoid large-frame drops) ---
+	const TSharedPtr<FJsonObject>* RecItemObj = nullptr;
+	if (StatusJson->TryGetObjectField(TEXT("recording_item"), RecItemObj) && RecItemObj && RecItemObj->IsValid())
+	{
+		int32 RecIndex = 0, RecTotal = 0;
+		StatusJson->TryGetNumberField(TEXT("index"), RecIndex);
+		StatusJson->TryGetNumberField(TEXT("total"), RecTotal);
+
+		if (RecIndex == 0) { PendingRecordings.Reset(); }
+
+		FRecordingInfo Info;
+		(*RecItemObj)->TryGetStringField(TEXT("filename"), Info.Filename);
+		(*RecItemObj)->TryGetNumberField(TEXT("frames"), Info.Frames);
+		double Dur = 0.0;
+		(*RecItemObj)->TryGetNumberField(TEXT("duration_sec"), Dur);
+		Info.DurationSec = static_cast<float>(Dur);
+		(*RecItemObj)->TryGetStringField(TEXT("recorded_at"), Info.RecordedAt);
+		PendingRecordings.Add(Info);
+
+		if (RecTotal > 0 && PendingRecordings.Num() >= RecTotal)
+		{
+			Recordings = PendingRecordings;
+			Recordings.Sort([](const FRecordingInfo& A, const FRecordingInfo& B)
+				{
+					return A.Filename > B.Filename;   // newest first (top)
+				});
+			PendingRecordings.Reset();
+			++RecordingsVersion;
+			UE_LOG(LogRosBridge, Log, TEXT("Recordings list updated: %d files"), Recordings.Num());
+		}
+	}
+
+	// --- Recordings list cleared (empty result) ---
+	bool bRecClear = false;
+	if (StatusJson->TryGetBoolField(TEXT("recordings_clear"), bRecClear) && bRecClear)
+	{
+		Recordings.Reset();
+		PendingRecordings.Reset();
+		++RecordingsVersion;
+		UE_LOG(LogRosBridge, Log, TEXT("Recordings list cleared"));
+	}
+
+	// --- Replay progress ---
+	const TSharedPtr<FJsonObject>* ProgObj = nullptr;
+	if (StatusJson->TryGetObjectField(TEXT("replay_progress"), ProgObj) && ProgObj)
+	{
+		(*ProgObj)->TryGetNumberField(TEXT("index"), ReplayIndex);
+		(*ProgObj)->TryGetNumberField(TEXT("total"), ReplayTotal);
+		(*ProgObj)->TryGetStringField(TEXT("filename"), ReplayProgFilename);
+		(*ProgObj)->TryGetBoolField(TEXT("approaching"), bReplayApproaching);
 	}
 
 	// Display device-level errors (USB disconnection, serial errors)

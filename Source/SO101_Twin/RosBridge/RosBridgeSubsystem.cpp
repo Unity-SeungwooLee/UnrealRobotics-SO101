@@ -139,6 +139,7 @@ void URosBridgeSubsystem::Subscribe(const FString& Topic, const FString& Type)
     Json->SetStringField(TEXT("op"), TEXT("subscribe"));
     Json->SetStringField(TEXT("topic"), Topic);
     Json->SetStringField(TEXT("type"), Type);
+    Json->SetNumberField(TEXT("fragment_size"), 1000);
 
     FString Payload;
     const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Payload);
@@ -242,6 +243,7 @@ void URosBridgeSubsystem::RestoreSubscriptions()
         Json->SetStringField(TEXT("op"), TEXT("subscribe"));
         Json->SetStringField(TEXT("topic"), Pair.Key);
         Json->SetStringField(TEXT("type"), Pair.Value);
+        Json->SetNumberField(TEXT("fragment_size"), 1000);
 
         FString Payload;
         const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Payload);
@@ -447,9 +449,37 @@ void URosBridgeSubsystem::ProcessIncomingMessage(const FString& Message)
 
         OnTopicMessage.Broadcast(Topic, MsgJson);
     }
+    else if (Op == TEXT("fragment"))
+    {
+        // rosbridge splits large messages into fragments:
+        // {"op":"fragment","id":...,"num":i,"total":n,"data":"chunk"}
+        FString FragId, FragData;
+        int32 FragNum = 0, FragTotal = 0;
+        Json->TryGetStringField(TEXT("id"), FragId);
+        Json->TryGetNumberField(TEXT("num"), FragNum);
+        Json->TryGetNumberField(TEXT("total"), FragTotal);
+        Json->TryGetStringField(TEXT("data"), FragData);
+
+        UE_LOG(LogRosBridge, Warning, TEXT("Fragment %d/%d id=%s"), FragNum, FragTotal, *FragId);
+
+        if (FragTotal <= 0 || FragId.IsEmpty()) { return; }
+
+        TArray<FString>& Parts = FragmentBuffers.FindOrAdd(FragId);
+        if (Parts.Num() != FragTotal) { Parts.Init(FString(), FragTotal); }
+        if (Parts.IsValidIndex(FragNum)) { Parts[FragNum] = FragData; }
+
+        bool bComplete = true;
+        for (const FString& P : Parts) { if (P.IsEmpty()) { bComplete = false; break; } }
+        if (bComplete)
+        {
+            FString Reassembled;
+            for (const FString& P : Parts) { Reassembled += P; }
+            FragmentBuffers.Remove(FragId);
+            ProcessIncomingMessage(Reassembled);  // re-process the full message
+        }
+    }
     else
     {
-        // Other ops (status, service_response, etc.) - just log for now.
         UE_LOG(LogRosBridge, Verbose, TEXT("Unhandled op '%s': %s"), *Op, *Message);
     }
 }

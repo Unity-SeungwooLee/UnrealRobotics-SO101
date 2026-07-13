@@ -9,7 +9,7 @@ public class SO101_Twin : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG", "Slate", "SlateCore" });
 
         PrivateDependencyModuleNames.AddRange(new string[] {
             "WebSockets",
@@ -19,6 +19,7 @@ public class SO101_Twin : ModuleRules
 
         PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "RosBridge"));
         PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Robot"));
+        PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "UI"));
 
         // Uncomment if you are using Slate UI
         // PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
