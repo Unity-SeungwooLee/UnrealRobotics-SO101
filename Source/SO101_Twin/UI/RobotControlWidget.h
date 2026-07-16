@@ -2,10 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "RobotVisualizer.h"
+#include "ToastWidget.h"   // EToastLevel
 #include "RobotControlWidget.generated.h"
 
-class ARobotVisualizer;
 class URosBridgeSubsystem;
+class URosBridgeSubsystem;
+class UJointRowWidget;
+class UJointGraphWidget;
 
 /**
  * Base class for the in-viewport robot control UI (Phase 10).
@@ -75,6 +79,23 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ROS|UI")
 	bool HasRobot() const;
 
+	// --- Joint monitoring (Stage 3) ---
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	bool HasJointLimits() const;
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	float GetJointAngleDeg(FName JointName) const;
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	float GetJointRangeAlpha(FName JointName) const;
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	EJointWarn GetJointWarnLevel(FName JointName) const;
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	TArray<float> GetJointHistory(FName JointName) const;
+
 protected:
 	virtual void NativeConstruct() override;
 
@@ -132,6 +153,39 @@ protected:
 
 	void RefreshRecordingsList();
 	void RefreshReplayProgress();
+
+	/** Re-request data that gets dropped right after connect (Appendix A #47). */
+	void RefreshAutoRequests();
+
+	/** Spawn one JointRow per joint into JointListBox. Called once. */
+	void BuildJointRows();
+
+	/** Push current joint values into every row. Runs at 5 Hz. */
+	void RefreshJointMonitor();
+
+	/** Row widget class — set this to WBP_JointRow in WBP_RobotControl's Details. */
+	UPROPERTY(EditDefaultsOnly, Category = "ROS|UI")
+	TSubclassOf<UJointRowWidget> JointRowClass;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<class UVerticalBox> JointListBox;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UJointRowWidget>> JointRows;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<class UJointGraphWidget> JointGraph;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<class UToastWidget> Toast;
+
+	/** Watches robot state for events worth toasting (state changes, errors). */
+	void RefreshToasts();
+
+	FString LastToastWorkerState;
+	FString LastToastSaved;
+	bool bLastFollowerErr = false;
+	bool bLastLeaderErr = false;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<class UButton> RefreshRecordingsButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<class UComboBoxString> RecordingComboBox;

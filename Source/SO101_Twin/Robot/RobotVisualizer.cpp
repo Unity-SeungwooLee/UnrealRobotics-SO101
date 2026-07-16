@@ -136,6 +136,11 @@ void ARobotVisualizer::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (GEngine)
+	{
+		GEngine->bEnableOnScreenDebugMessages = bShowOnScreenDebug;
+	}
+
 	// --- Load meshes and attach to links ---
 	// Meshes are loaded at runtime (not in constructor) because
 	// StaticLoadObject is safer to call here and allows hot-reload.
@@ -610,6 +615,11 @@ void ARobotVisualizer::ParseAndApplyJointStates(const FString& MessageJson)
 		const FName JointName(*(*NameArray)[i]->AsString());
 		const double AngleRad = (*PosArray)[i]->AsNumber();
 
+		// Cache the RAW LeRobot degrees (not the UE-converted value below).
+		// The bridge publishes deg2rad(LeRobot degrees) with no URDF remap,
+		// so this is directly comparable to the worker's JOINT_LIMITS_DEG.
+		CurrentJointDeg.Add(JointName, static_cast<float>(FMath::RadiansToDegrees(AngleRad)));
+
 		TObjectPtr<USceneComponent>* JointComp = JointComponentMap.Find(JointName);
 		if (JointComp && *JointComp)
 		{
@@ -636,6 +646,7 @@ void ARobotVisualizer::ParseAndApplyJointStates(const FString& MessageJson)
 			(*JointComp)->SetRelativeRotation(FinalQuat.Rotator());
 		}
 	}
+	RecordJointHistory();
 }
 
 // =============================================================================
@@ -807,20 +818,10 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 	if (bBridgeHeartbeatLost)
 	{
 		bBridgeHeartbeatLost = false;
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
-				TEXT("Bridge: Connection restored"));
-		}
 	}
 	if (bWorkerDataLost)
 	{
 		bWorkerDataLost = false;
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
-				TEXT("Worker: Connection restored"));
-		}
 	}
 
 	// rosbridge wraps std_msgs/String as: {"data": "..."}
@@ -852,17 +853,6 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 		{
 			WorkerState = State;
 			UE_LOG(LogRosBridge, Log, TEXT("Worker state: %s"), *WorkerState);
-
-			if (GEngine)
-			{
-				FColor Color = FColor::White;
-				if (State == TEXT("recording")) Color = FColor::Green;
-				else if (State == TEXT("replaying")) Color = FColor::Cyan;
-				else if (State == TEXT("idle")) Color = FColor::Silver;
-
-				GEngine->AddOnScreenDebugMessage(-1, 3.0f, Color,
-					FString::Printf(TEXT("Robot state: %s"), *WorkerState));
-			}
 		}
 	}
 
@@ -885,15 +875,12 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 		FString Reason;
 		StatusJson->TryGetStringField(TEXT("reason"), Reason);
 		UE_LOG(LogRosBridge, Warning, TEXT("Robot command error: %s"), *Reason);
-
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red,
-				FString::Printf(TEXT("Robot error: %s"), *Reason));
-		}
 	}
 
-	// Log recording saved info
+	// Recording saved: worker sends `filename` on BOTH stop_record (state=idle)
+	// AND start_replay (state=replaying). Only the former is a real save, so
+	// gate on state=idle + a real frame count to avoid a false "saved" toast
+	// when the user starts a replay.
 	FString Filename;
 	if (StatusJson->TryGetStringField(TEXT("filename"), Filename) && !Filename.IsEmpty())
 	{
@@ -902,14 +889,11 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 		double Duration = 0.0;
 		StatusJson->TryGetNumberField(TEXT("duration_sec"), Duration);
 
-		UE_LOG(LogRosBridge, Log, TEXT("Recording saved: %s (%d frames, %.1fs)"),
-			*Filename, Frames, Duration);
-
-		if (GEngine)
+		if (State == TEXT("idle") && Frames > 0)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
-				FString::Printf(TEXT("Recording saved: %s (%d frames, %.1fs)"),
-					*Filename, Frames, Duration));
+			UE_LOG(LogRosBridge, Log, TEXT("Recording saved: %s (%d frames, %.1fs)"),
+				*Filename, Frames, Duration);
+			LastSavedRecording = Filename;
 		}
 	}
 
@@ -979,6 +963,30 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 		UE_LOG(LogRosBridge, Log, TEXT("Recordings list cleared"));
 	}
 
+	// --- Joint limits (reply to get_joint_limits) ---
+	// Single source of truth: the worker owns JOINT_LIMITS_DEG and we mirror it.
+	// The payload is ~200 bytes, so no chunking is needed (unlike list_recordings).
+	const TSharedPtr<FJsonObject>* LimitsObj = nullptr;
+	if (StatusJson->TryGetObjectField(TEXT("joint_limits"), LimitsObj) && LimitsObj && LimitsObj->IsValid())
+	{
+		JointLimitsDeg.Reset();
+		for (const auto& Pair : (*LimitsObj)->Values)
+		{
+			const TSharedPtr<FJsonObject> LObj = Pair.Value->AsObject();
+			if (!LObj.IsValid()) { continue; }
+
+			double MinV = -180.0, MaxV = 180.0;
+			LObj->TryGetNumberField(TEXT("min"), MinV);
+			LObj->TryGetNumberField(TEXT("max"), MaxV);
+
+			FJointLimit L;
+			L.Min = static_cast<float>(MinV);
+			L.Max = static_cast<float>(MaxV);
+			JointLimitsDeg.Add(FName(*Pair.Key), L);
+		}
+		UE_LOG(LogRosBridge, Log, TEXT("Joint limits received: %d joints"), JointLimitsDeg.Num());
+	}
+
 	// --- Replay progress ---
 	const TSharedPtr<FJsonObject>* ProgObj = nullptr;
 	if (StatusJson->TryGetObjectField(TEXT("replay_progress"), ProgObj) && ProgObj)
@@ -1003,21 +1011,11 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 	{
 		bFollowerDeviceError = true;
 		UE_LOG(LogRosBridge, Error, TEXT("Follower USB error: %s"), *FollowerErr);
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red,
-				TEXT("*** Follower: USB/Serial ERROR *** Check USB connection."));
-		}
 	}
 	else if (FollowerErr.IsEmpty() && bFollowerDeviceError)
 	{
 		bFollowerDeviceError = false;
 		UE_LOG(LogRosBridge, Log, TEXT("Follower USB restored."));
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
-				TEXT("Follower: USB connection restored"));
-		}
 	}
 
 	// Check leader error
@@ -1030,20 +1028,108 @@ void ARobotVisualizer::OnRobotStatus(const FString& Topic, const FString& Messag
 	{
 		bLeaderDeviceError = true;
 		UE_LOG(LogRosBridge, Error, TEXT("Leader USB error: %s"), *LeaderErr);
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red,
-				TEXT("*** Leader: USB/Serial ERROR *** Check USB connection."));
-		}
 	}
 	else if (LeaderErr.IsEmpty() && bLeaderDeviceError)
 	{
 		bLeaderDeviceError = false;
 		UE_LOG(LogRosBridge, Log, TEXT("Leader USB restored."));
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
-				TEXT("Leader: USB connection restored"));
-		}
 	}
+}
+
+// =============================================================================
+// Phase 10 Stage 3 — Joint monitoring
+// =============================================================================
+
+TArray<FName> ARobotVisualizer::GetJointNames()
+{
+	static const TArray<FName> Names = {
+		FName("shoulder_pan"), FName("shoulder_lift"), FName("elbow_flex"),
+		FName("wrist_flex"),   FName("wrist_roll"),    FName("gripper")
+	};
+	return Names;
+}
+
+float ARobotVisualizer::GetJointAngleDeg(FName JointName) const
+{
+	const float* V = CurrentJointDeg.Find(JointName);
+	return V ? *V : 0.0f;
+}
+
+bool ARobotVisualizer::GetJointLimit(FName JointName, float& OutMin, float& OutMax) const
+{
+	if (const FJointLimit* L = JointLimitsDeg.Find(JointName))
+	{
+		OutMin = L->Min;
+		OutMax = L->Max;
+		return true;
+	}
+	OutMin = -180.0f;
+	OutMax = 180.0f;
+	return false;
+}
+
+float ARobotVisualizer::GetJointRangeAlpha(FName JointName) const
+{
+	float Min = 0.0f, Max = 0.0f;
+	if (!GetJointLimit(JointName, Min, Max) || FMath::IsNearlyEqual(Min, Max))
+	{
+		return 0.0f;
+	}
+	return FMath::Clamp((GetJointAngleDeg(JointName) - Min) / (Max - Min), 0.0f, 1.0f);
+}
+
+EJointWarn ARobotVisualizer::GetJointWarnLevel(FName JointName) const
+{
+	float Min = 0.0f, Max = 0.0f;
+	if (!GetJointLimit(JointName, Min, Max))
+	{
+		return EJointWarn::Normal;   // limits not received yet — don't cry wolf
+	}
+
+	const float A = GetJointAngleDeg(JointName);
+
+	// Headroom = absolute degrees to the nearest limit. Absolute rather than
+	// percentage: the gripper's range is only ~99 deg, so a percentage threshold
+	// would fire far too late on it relative to the shoulder joints.
+	const float Headroom = FMath::Min(A - Min, Max - A);
+
+	if (Headroom <= JointDangerMarginDeg) { return EJointWarn::Danger; }
+	if (Headroom <= JointCautionMarginDeg) { return EJointWarn::Caution; }
+	return EJointWarn::Normal;
+}
+
+void ARobotVisualizer::RecordJointHistory()
+{
+	for (const FName& N : GetJointNames())
+	{
+		TArray<float>& Buf = JointHistory.FindOrAdd(N);
+		if (Buf.Num() != JointHistoryCapacity)
+		{
+			Buf.Init(0.0f, JointHistoryCapacity);
+		}
+		const float* Cur = CurrentJointDeg.Find(N);
+		Buf[JointHistoryHead] = Cur ? *Cur : 0.0f;
+	}
+
+	JointHistoryHead = (JointHistoryHead + 1) % JointHistoryCapacity;
+	JointHistoryCount = FMath::Min(JointHistoryCount + 1, JointHistoryCapacity);
+}
+
+TArray<float> ARobotVisualizer::GetJointHistory(FName JointName) const
+{
+	TArray<float> Out;
+	const TArray<float>* Buf = JointHistory.Find(JointName);
+	if (!Buf || Buf->Num() != JointHistoryCapacity || JointHistoryCount == 0)
+	{
+		return Out;
+	}
+
+	// Unroll the ring buffer into chronological order (oldest -> newest).
+	const int32 Start = (JointHistoryHead - JointHistoryCount + JointHistoryCapacity) % JointHistoryCapacity;
+	Out.Reserve(JointHistoryCount);
+	for (int32 i = 0; i < JointHistoryCount; ++i)
+	{
+		Out.Add((*Buf)[(Start + i) % JointHistoryCapacity]);
+	}
+	return Out;
 }

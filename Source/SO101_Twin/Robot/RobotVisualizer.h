@@ -36,6 +36,25 @@ class URobotControlWidget;
  *   - All commands publish JSON to /robot_command topic
  *   - Worker state feedback via /robot_status subscription
  */
+ /** Joint proximity warning level, based on remaining headroom to the limit. */
+UENUM(BlueprintType)
+enum class EJointWarn : uint8
+{
+	Normal   UMETA(DisplayName = "Normal"),
+	Caution  UMETA(DisplayName = "Caution"),
+	Danger   UMETA(DisplayName = "Danger"),
+};
+
+/** Physical joint limit in LeRobot degrees (received from worker). */
+USTRUCT(BlueprintType)
+struct FJointLimit
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "ROS|Monitor") float Min = -180.0f;
+	UPROPERTY(BlueprintReadOnly, Category = "ROS|Monitor") float Max = 180.0f;
+};
+
 USTRUCT(BlueprintType)
 struct FRecordingInfo
 {
@@ -93,6 +112,43 @@ public:
 	int32 GetReplayTotal() const { return ReplayTotal; }
 	bool IsReplayApproaching() const { return bReplayApproaching; }
 
+	// =================================================================
+	// Phase 10 Stage 3 — Joint monitoring
+	// =================================================================
+
+	/** Canonical joint order — matches worker/bridge JOINT_NAMES. */
+	UFUNCTION(BlueprintPure, Category = "ROS|Monitor")
+	static TArray<FName> GetJointNames();
+
+	/** True once joint limits have arrived from the worker. */
+	UFUNCTION(BlueprintPure, Category = "ROS|Monitor")
+	bool HasJointLimits() const { return JointLimitsDeg.Num() > 0; }
+
+	/** Latest angle in LeRobot degrees — same frame as the worker's JOINT_LIMITS_DEG. */
+	UFUNCTION(BlueprintPure, Category = "ROS|Monitor")
+	float GetJointAngleDeg(FName JointName) const;
+
+	UFUNCTION(BlueprintPure, Category = "ROS|Monitor")
+	bool GetJointLimit(FName JointName, float& OutMin, float& OutMax) const;
+
+	/** 0..1 position within the physical range — drives the range bar. */
+	UFUNCTION(BlueprintPure, Category = "ROS|Monitor")
+	float GetJointRangeAlpha(FName JointName) const;
+
+	UFUNCTION(BlueprintPure, Category = "ROS|Monitor")
+	EJointWarn GetJointWarnLevel(FName JointName) const;
+
+	/** Recent samples, oldest -> newest (up to 300 = ~10s at 30Hz). */
+	UFUNCTION(BlueprintPure, Category = "ROS|Monitor")
+	TArray<float> GetJointHistory(FName JointName) const;
+
+	/** Ring buffer depth, in samples. */
+	UFUNCTION(BlueprintPure, Category = "ROS|Monitor")
+	static int32 GetJointHistoryCapacity() { return JointHistoryCapacity; }
+
+	UFUNCTION(BlueprintPure, Category = "ROS|UI")
+	FString GetLastSavedRecording() const { return LastSavedRecording; }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -109,6 +165,19 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "ROS|Topics")
 	FString JointStateType = TEXT("sensor_msgs/JointState");
+
+	/** Headroom (deg) to the nearest limit below which the joint shows Caution. */
+	UPROPERTY(EditAnywhere, Category = "ROS|Monitor")
+	float JointCautionMarginDeg = 10.0f;
+
+	/** Headroom (deg) below which the joint shows Danger. */
+	UPROPERTY(EditAnywhere, Category = "ROS|Monitor")
+	float JointDangerMarginDeg = 3.0f;
+
+	/** On-screen debug spam. Off by default — the UI panel replaces it (Phase 10).
+	 *  Turn on temporarily when diagnosing raw ROS traffic. */
+	UPROPERTY(EditAnywhere, Category = "ROS|Debug")
+	bool bShowOnScreenDebug = false;
 
 	// =================================================================
 	// MoveIt Command Interface (Phase 8)
@@ -359,6 +428,20 @@ private:
 	int32 ReplayTotal = 0;
 	FString ReplayProgFilename;
 	bool bReplayApproaching = false;
+
+	FString LastSavedRecording;
+
+	// --- Joint monitoring state (Stage 3) ---
+	static constexpr int32 JointHistoryCapacity = 300;   // ~10s at 30Hz
+
+	TMap<FName, FJointLimit> JointLimitsDeg;
+	TMap<FName, float> CurrentJointDeg;
+	TMap<FName, TArray<float>> JointHistory;   // per-joint ring buffer
+	int32 JointHistoryHead = 0;
+	int32 JointHistoryCount = 0;
+
+	/** Push one sample of every joint into the ring buffer. */
+	void RecordJointHistory();
 
 	// =================================================================
 	// Helpers (declared in original header, kept for compatibility)

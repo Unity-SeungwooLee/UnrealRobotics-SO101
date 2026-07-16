@@ -21,6 +21,11 @@
 #include "TimerManager.h"
 #include "Engine/World.h"
 
+#include "Components/VerticalBox.h"
+#include "JointRowWidget.h"
+
+#include "JointGraphWidget.h"
+
 void URobotControlWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -56,6 +61,8 @@ void URobotControlWidget::NativeConstruct()
 	{
 		RecordingComboBox->OnSelectionChanged.AddDynamic(this, &URobotControlWidget::HandleRecordingSelected);
 	}
+
+	BuildJointRows();
 }
 
 ARobotVisualizer* URobotControlWidget::ResolveRobot()
@@ -109,8 +116,11 @@ void URobotControlWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 		RefreshAccum = 0.0f;
 		RefreshSafetyUI();
 		RefreshControlUI();
+		RefreshAutoRequests();
 		RefreshRecordingsList();
 		RefreshReplayProgress();
+		RefreshJointMonitor();
+		RefreshToasts();
 	}
 }
 
@@ -247,23 +257,33 @@ void URobotControlWidget::HandleRecordingSelected(FString SelectedItem, ESelectI
 	}
 }
 
+void URobotControlWidget::RefreshAutoRequests()
+{
+	ARobotVisualizer* R = ResolveRobot();
+	if (!R || !IsWorkerAlive()) { return; }
+
+	// Commands fired the instant the worker goes alive are silently lost —
+	// the bridge's /robot_command subscription isn't wired yet (Appendix A #47).
+	// Retry every ~2s; each request stops on its own once its data lands.
+	AutoRequestAccum += 0.2f;   // NativeTick calls this at 5 Hz
+	if (AutoRequestAccum < 2.0f) { return; }
+	AutoRequestAccum = 0.0f;
+
+	if (R->GetRecordingsVersion() == 0)
+	{
+		R->PublishRobotCommand(TEXT("{\"cmd\":\"list_recordings\"}"));
+	}
+	if (!R->HasJointLimits())
+	{
+		R->PublishRobotCommand(TEXT("{\"cmd\":\"get_joint_limits\"}"));
+	}
+}
+
 void URobotControlWidget::RefreshRecordingsList()
 {
 	if (!RecordingComboBox) return;
 	ARobotVisualizer* R = ResolveRobot();
 	if (!R) return;
-
-	// Auto-request the list until it actually arrives: retry every ~2s while the
-	// worker is alive and we still have no recordings. Stops once the list lands.
-	if (IsWorkerAlive() && R->GetRecordingsVersion() == 0)
-	{
-		AutoRequestAccum += 0.2f;   // this function runs at 5 Hz
-		if (AutoRequestAccum >= 2.0f)
-		{
-			AutoRequestAccum = 0.0f;
-			R->PublishRobotCommand(TEXT("{\"cmd\":\"list_recordings\"}"));
-		}
-	}
 
 	// Rebuild the combo only when the actor's recordings actually changed.
 	if (R->GetRecordingsVersion() == CachedRecordingsVersion) return;
@@ -330,3 +350,119 @@ bool URobotControlWidget::IsWorkerAlive() const { return Robot.IsValid() && Robo
 bool URobotControlWidget::HasFollowerError() const { return Robot.IsValid() && Robot->HasFollowerError(); }
 bool URobotControlWidget::HasLeaderError() const { return Robot.IsValid() && Robot->HasLeaderError(); }
 bool URobotControlWidget::HasRobot() const { return Robot.IsValid(); }
+
+// --- Joint monitoring passthroughs (Stage 3) ---
+
+bool URobotControlWidget::HasJointLimits() const
+{
+	return Robot.IsValid() && Robot->HasJointLimits();
+}
+
+float URobotControlWidget::GetJointAngleDeg(FName JointName) const
+{
+	return Robot.IsValid() ? Robot->GetJointAngleDeg(JointName) : 0.0f;
+}
+
+float URobotControlWidget::GetJointRangeAlpha(FName JointName) const
+{
+	return Robot.IsValid() ? Robot->GetJointRangeAlpha(JointName) : 0.0f;
+}
+
+EJointWarn URobotControlWidget::GetJointWarnLevel(FName JointName) const
+{
+	return Robot.IsValid() ? Robot->GetJointWarnLevel(JointName) : EJointWarn::Normal;
+}
+
+TArray<float> URobotControlWidget::GetJointHistory(FName JointName) const
+{
+	return Robot.IsValid() ? Robot->GetJointHistory(JointName) : TArray<float>();
+}
+
+// --- Joint monitor panel (Stage 3b) ---
+
+void URobotControlWidget::BuildJointRows()
+{
+	if (!JointListBox || !JointRowClass) { return; }
+
+	JointListBox->ClearChildren();
+	JointRows.Reset();
+
+	// One row per joint, in the canonical worker/bridge order.
+	for (const FName& JointName : ARobotVisualizer::GetJointNames())
+	{
+		UJointRowWidget* Row = CreateWidget<UJointRowWidget>(this, JointRowClass);
+		if (!Row) { continue; }
+
+		Row->InitJoint(JointName);
+		JointListBox->AddChildToVerticalBox(Row);
+		JointRows.Add(Row);
+	}
+}
+
+void URobotControlWidget::RefreshJointMonitor()
+{
+	ARobotVisualizer* R = Robot.Get();
+	if (!R) { return; }
+
+	if (JointGraph) { JointGraph->SetRobot(R); }
+
+	for (UJointRowWidget* Row : JointRows)
+	{
+		if (Row) { Row->Refresh(R); }
+	}
+}
+
+// --- Event toasts (Stage 4a) ---
+
+void URobotControlWidget::RefreshToasts()
+{
+	ARobotVisualizer* R = Robot.Get();
+	if (!R || !Toast) { return; }
+
+	// Worker state transitions (idle/syncing/recording/replaying).
+	const FString WS = R->GetWorkerState();
+	if (WS != LastToastWorkerState)
+	{
+		if (WS == TEXT("recording"))
+			Toast->Push(TEXT("Recording started"), EToastLevel::Warning);
+		else if (WS == TEXT("replaying"))
+			Toast->Push(TEXT("Replay started"), EToastLevel::Info);
+		else if (WS == TEXT("syncing"))
+			Toast->Push(TEXT("Teleop sync ON"), EToastLevel::Info);
+		else if (WS == TEXT("idle") && !LastToastWorkerState.IsEmpty())
+			Toast->Push(TEXT("Idle"), EToastLevel::Info);
+		LastToastWorkerState = WS;
+	}
+
+	// Follower device error edges.
+	const bool bFollowerErr = R->HasFollowerError();
+	if (bFollowerErr != bLastFollowerErr)
+	{
+		Toast->Push(bFollowerErr
+			? TEXT("Follower: USB/Serial ERROR")
+			: TEXT("Follower: USB restored"),
+			bFollowerErr ? EToastLevel::Error : EToastLevel::Success);
+		bLastFollowerErr = bFollowerErr;
+	}
+
+	// Leader device error edges.
+	const bool bLeaderErr = R->HasLeaderError();
+	if (bLeaderErr != bLastLeaderErr)
+	{
+		Toast->Push(bLeaderErr
+			? TEXT("Leader: USB/Serial ERROR")
+			: TEXT("Leader: USB restored"),
+			bLeaderErr ? EToastLevel::Error : EToastLevel::Success);
+		bLastLeaderErr = bLeaderErr;
+	}
+
+	// Recording-saved edge — RecordingsVersion bumps when a new list lands,
+	// but the "saved" event is better keyed off the actor's last saved file.
+	const FString Saved = R->GetLastSavedRecording();
+	if (!Saved.IsEmpty() && Saved != LastToastSaved)
+	{
+		Toast->Push(FString::Printf(TEXT("Recording saved: %s"), *Saved),
+			EToastLevel::Success);
+		LastToastSaved = Saved;
+	}
+}
