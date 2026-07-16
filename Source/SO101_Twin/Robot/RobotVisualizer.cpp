@@ -18,6 +18,8 @@
 #include "GameFramework/PlayerController.h"
 #include "Blueprint/UserWidget.h"
 #include "RobotControlWidget.h"
+#include "ToastWidget.h"
+#include "Camera/CameraActor.h"
 
 // =============================================================================
 // Mesh asset path helper
@@ -141,6 +143,48 @@ void ARobotVisualizer::BeginPlay()
 		GEngine->bEnableOnScreenDebugMessages = bShowOnScreenDebug;
 	}
 
+	// Enable a persistent mouse cursor and click/hover events so the robot
+	// meshes can be picked in-viewport (Phase 10 Stage 4b). Without this the
+	// PIE cursor vanishes and MakeClickable / hover callbacks never fire.
+	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		PC->bShowMouseCursor = true;
+		PC->bEnableClickEvents = true;
+		PC->bEnableMouseOverEvents = true;
+
+		// Let the cursor move freely over the whole viewport.
+		FInputModeGameAndUI InputMode;
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		InputMode.SetHideCursorDuringCapture(false);
+		PC->SetInputMode(InputMode);
+
+		// Global left-click: closes the panel on empty-space clicks. The mesh
+		// OnClicked handler runs too on robot hits, so we use a one-frame flag
+		// to tell the two apart (see OnAnyClickPressed).
+		if (PC->InputComponent)
+		{
+			PC->InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed,
+				this, &ARobotVisualizer::OnAnyClickPressed);
+		}
+
+		// Move the free-look pawn to the DefaultCam's pose, then keep the pawn
+		// as the view target. This gives the DefaultCam framing AS A STARTING
+		// POINT while leaving the pawn free to fly around from there.
+		if (DefaultCamera)
+		{
+			if (APawn* Pawn = PC->GetPawn())
+			{
+				Pawn->SetActorLocationAndRotation(
+					DefaultCamera->GetActorLocation(),
+					DefaultCamera->GetActorRotation());
+				// Control rotation must match or the pawn snaps back on first input.
+				PC->SetControlRotation(DefaultCamera->GetActorRotation());
+			}
+		}
+		// The pawn IS the free-look view target — restore to it when closing.
+		InitialViewTarget = PC->GetPawn();
+	}
+
 	// --- Load meshes and attach to links ---
 	// Meshes are loaded at runtime (not in constructor) because
 	// StaticLoadObject is safer to call here and allows hot-reload.
@@ -158,7 +202,12 @@ void ARobotVisualizer::BeginPlay()
 		SMC->SetStaticMesh(Mesh);
 		SMC->SetRelativeLocation(RosCoordConv::RosToUePosition(RosX, RosY, RosZ));
 		SMC->SetRelativeRotation(RosCoordConv::RosRpyToUeRotator(RosRoll, RosPitch, RosYaw));
-		SMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		// Clickable: query collision on the visibility channel so the mouse
+		// click trace hits it, and bind the toggle handler.
+		SMC->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		SMC->SetCollisionResponseToAllChannels(ECR_Ignore);
+		SMC->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+		SMC->OnClicked.AddDynamic(this, &ARobotVisualizer::OnRobotMeshClicked);
 		SMC->AttachToComponent(Parent, FAttachmentTransformRules::KeepRelativeTransform);
 		SMC->RegisterComponent();
 		AllMeshComponents.Add(SMC);
@@ -284,7 +333,25 @@ void ARobotVisualizer::BeginPlay()
 			if (ControlWidget)
 			{
 				ControlWidget->AddToViewport();
+				// Start hidden — the panel appears when the robot is clicked.
+				ControlWidget->SetVisibility(ESlateVisibility::Collapsed);
+				bControlWidgetVisible = false;
 				UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: control widget added to viewport."));
+			}
+		}
+	}
+
+	// Toast lives independently of the control panel so it stays visible even
+	// when the panel is hidden (Stage 4b).
+	if (ToastWidgetClass)
+	{
+		if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+		{
+			ToastWidget = CreateWidget<UToastWidget>(PC, ToastWidgetClass);
+			if (ToastWidget)
+			{
+				ToastWidget->AddToViewport(10);  // high Z-order: always on top
+				UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: toast widget added to viewport."));
 			}
 		}
 	}
@@ -315,6 +382,12 @@ void ARobotVisualizer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		ControlWidget->RemoveFromParent();
 		ControlWidget = nullptr;
+	}
+
+	if (ToastWidget)
+	{
+		ToastWidget->RemoveFromParent();
+		ToastWidget = nullptr;
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -1132,4 +1205,64 @@ TArray<float> ARobotVisualizer::GetJointHistory(FName JointName) const
 		Out.Add((*Buf)[(Start + i) % JointHistoryCapacity]);
 	}
 	return Out;
+}
+
+// =============================================================================
+// Phase 10 Stage 4b — Click-to-toggle control widget
+// =============================================================================
+
+void ARobotVisualizer::OnRobotMeshClicked(UPrimitiveComponent* ClickedComp, FKey ButtonPressed)
+{
+	if (ButtonPressed != EKeys::LeftMouseButton) { return; }
+
+	// Mark that this frame's click landed on the robot, so the global
+	// click handler (which also fires) doesn't immediately close it.
+	bRobotClickedThisFrame = true;
+	ShowControlWidget();
+}
+
+void ARobotVisualizer::OnAnyClickPressed()
+{
+	// Don't close if the click landed on the robot (mesh handler set the flag)
+	// or on the control panel itself.
+	if (bRobotClickedThisFrame || IsMouseOverControlPanel())
+	{
+		bRobotClickedThisFrame = false;
+		return;
+	}
+	HideControlWidget();
+	bRobotClickedThisFrame = false;
+}
+
+void ARobotVisualizer::ShowControlWidget()
+{
+	if (!ControlWidget || bControlWidgetVisible) { return; }
+	bControlWidgetVisible = true;
+	ControlWidget->PlayShow();
+	BlendToCamera(CloseupCamera);   // close in on the robot
+}
+
+void ARobotVisualizer::HideControlWidget()
+{
+	if (!ControlWidget || !bControlWidgetVisible) { return; }
+	bControlWidgetVisible = false;
+	ControlWidget->PlayHide();
+	// Restore the free-look pawn, not a fixed CameraActor.
+	BlendToCamera(InitialViewTarget);
+}
+
+void ARobotVisualizer::BlendToCamera(AActor* Target)
+{
+	if (!Target) { return; }   // camera not assigned in level — skip silently
+	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		// Cubic blend gives an ease-in/out that matches the panel slide feel.
+		PC->SetViewTargetWithBlend(Target, CameraBlendTime, VTBlend_Cubic);
+	}
+}
+
+bool ARobotVisualizer::IsMouseOverControlPanel() const
+{
+	if (!ControlWidget || !bControlWidgetVisible) { return false; }
+	return ControlWidget->IsPanelHovered();
 }

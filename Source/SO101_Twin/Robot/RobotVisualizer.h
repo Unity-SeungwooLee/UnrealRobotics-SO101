@@ -82,6 +82,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ROS|UI")
 	TSubclassOf<URobotControlWidget> ControlWidgetClass;
 
+	/** Default camera to return to when the panel closes. Set in level. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ROS|Camera")
+	TObjectPtr<class AActor> DefaultCamera;
+
+	/** Close-up camera to blend to when the robot is clicked. Set in level. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ROS|Camera")
+	TObjectPtr<class AActor> CloseupCamera;
+
+	/** Camera blend time (seconds). Matches the panel slide for a unified feel. */
+	UPROPERTY(EditAnywhere, Category = "ROS|Camera")
+	float CameraBlendTime = 0.4f;
+
+	/** Toast widget to spawn independently into the viewport. Set to WBP_Toast. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ROS|UI")
+	TSubclassOf<class UToastWidget> ToastWidgetClass;
+
 	UFUNCTION(BlueprintPure, Category = "ROS|UI")
 	FString GetWorkerState() const { return WorkerState; }
 
@@ -353,6 +369,27 @@ private:
 	UFUNCTION()
 	void OnRosMessage(const FString& Topic, const FString& MessageJson);
 
+	/** Mesh click handler — toggles the control widget's visibility. */
+	UFUNCTION()
+	void OnRobotMeshClicked(UPrimitiveComponent* ClickedComp, FKey ButtonPressed);
+
+	/** Global left-click handler — closes the panel when clicking off the robot. */
+	UFUNCTION()
+	void OnAnyClickPressed();
+
+	void ShowControlWidget();
+	void HideControlWidget();
+
+	/** True if the cursor is currently over the control panel's PanelRoot. */
+	bool IsMouseOverControlPanel() const;
+
+	void BlendToCamera(AActor* Target);
+
+	/** Current widget visibility state. Starts hidden. */
+	bool bControlWidgetVisible = false;
+
+	bool bRobotClickedThisFrame = false;
+
 	/** Tracks rosbridge connection state for viewport warnings. */
 	bool bRosBridgeConnected = false;
 
@@ -421,6 +458,18 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<URobotControlWidget> ControlWidget;
 
+	UPROPERTY(Transient)
+	TObjectPtr<class UToastWidget> ToastWidget;
+
+	/** The view target at BeginPlay (the free-look pawn) to restore on close. */
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> InitialViewTarget;
+
+public:
+	/** Public accessor so the control widget can forward events to the toast. */
+	UToastWidget* GetToast() const { return ToastWidget; }
+
+private:
 	TArray<FRecordingInfo> Recordings;
 	TArray<FRecordingInfo> PendingRecordings;
 	int32 RecordingsVersion = 0;

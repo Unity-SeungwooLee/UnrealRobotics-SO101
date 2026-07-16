@@ -26,6 +26,10 @@
 
 #include "JointGraphWidget.h"
 
+#include "Components/Widget.h"
+
+#include "Framework/Application/SlateApplication.h"
+
 void URobotControlWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -108,6 +112,8 @@ void URobotControlWidget::CmdStartReplay(const FString& Filename, bool bLoop, fl
 void URobotControlWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	TickPanelAnim(InDeltaTime);   // every frame for smoothness
 
 	// Poll the robot state ~5x/sec (cheap, no delegates needed).
 	RefreshAccum += InDeltaTime;
@@ -417,7 +423,10 @@ void URobotControlWidget::RefreshJointMonitor()
 void URobotControlWidget::RefreshToasts()
 {
 	ARobotVisualizer* R = Robot.Get();
-	if (!R || !Toast) { return; }
+	if (!R) { return; }
+
+	UToastWidget* Toast = R->GetToast();
+	if (!Toast) { return; }
 
 	// Worker state transitions (idle/syncing/recording/replaying).
 	const FString WS = R->GetWorkerState();
@@ -465,4 +474,74 @@ void URobotControlWidget::RefreshToasts()
 			EToastLevel::Success);
 		LastToastSaved = Saved;
 	}
+}
+
+// --- Panel slide animation (Stage 4b) ---
+
+void URobotControlWidget::PlayShow()
+{
+	if (PanelPhase == EPanelPhase::Shown || PanelPhase == EPanelPhase::SlideIn) { return; }
+	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	PanelPhase = EPanelPhase::SlideIn;
+	PanelAnimTime = 0.0f;
+}
+
+void URobotControlWidget::PlayHide()
+{
+	if (PanelPhase == EPanelPhase::Hidden || PanelPhase == EPanelPhase::SlideOut) { return; }
+	PanelPhase = EPanelPhase::SlideOut;
+	PanelAnimTime = 0.0f;
+}
+
+void URobotControlWidget::TickPanelAnim(float DeltaTime)
+{
+	if (!PanelRoot) { return; }
+
+	switch (PanelPhase)
+	{
+	case EPanelPhase::Hidden:
+		return;
+
+	case EPanelPhase::Shown:
+		PanelRoot->SetRenderTranslation(FVector2D(0.0f, 0.0f));
+		return;
+
+	case EPanelPhase::SlideIn:
+	{
+		PanelAnimTime += DeltaTime;
+		const float T = FMath::Clamp(PanelAnimTime / PanelSlideSeconds, 0.0f, 1.0f);
+		const float Eased = 0.5f - 0.5f * FMath::Cos(T * PI);
+		PanelRoot->SetRenderTranslation(FVector2D(FMath::Lerp(PanelHiddenOffsetX, 0.0f, Eased), 0.0f));
+		if (T >= 1.0f) { PanelPhase = EPanelPhase::Shown; }
+		break;
+	}
+	case EPanelPhase::SlideOut:
+	{
+		PanelAnimTime += DeltaTime;
+		const float T = FMath::Clamp(PanelAnimTime / PanelSlideSeconds, 0.0f, 1.0f);
+		const float Eased = 0.5f - 0.5f * FMath::Cos(T * PI);
+		PanelRoot->SetRenderTranslation(FVector2D(FMath::Lerp(0.0f, PanelHiddenOffsetX, Eased), 0.0f));
+		if (T >= 1.0f)
+		{
+			PanelPhase = EPanelPhase::Hidden;
+			SetVisibility(ESlateVisibility::Collapsed);   // fully hidden -> stop hit-testing
+		}
+		break;
+	}
+	}
+}
+
+bool URobotControlWidget::IsPanelHovered() const
+{
+	if (!PanelRoot) { return false; }
+
+	const FGeometry& Geo = PanelRoot->GetCachedGeometry();
+	const FVector2D Size = Geo.GetLocalSize();
+	if (Size.X <= 0.0f || Size.Y <= 0.0f) { return false; }   // not laid out yet
+
+	const FVector2D CursorAbs = FSlateApplication::Get().GetCursorPos();
+	const FVector2D Local = Geo.AbsoluteToLocal(CursorAbs);
+
+	return Local.X >= 0.0f && Local.Y >= 0.0f
+		&& Local.X <= Size.X && Local.Y <= Size.Y;
 }

@@ -176,8 +176,9 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<class UJointGraphWidget> JointGraph;
 
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<class UToastWidget> Toast;
+	// 삭제:
+	// UPROPERTY(meta = (BindWidgetOptional))
+	// TObjectPtr<class UToastWidget> Toast;
 
 	/** Watches robot state for events worth toasting (state changes, errors). */
 	void RefreshToasts();
@@ -195,4 +196,31 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<class UTextBlock> ReplayProgressText;
 
 	int32 CachedRecordingsVersion = -1;
+
+public:
+	/** Called by the actor to slide the panel in / out (Stage 4b). */
+	void PlayShow();
+	void PlayHide();
+
+	/** True if the cursor is over the sliding panel body (PanelRoot). */
+	bool IsPanelHovered() const;
+
+protected:
+	enum class EPanelPhase : uint8 { Hidden, SlideIn, Shown, SlideOut };
+
+	EPanelPhase PanelPhase = EPanelPhase::Hidden;
+	float PanelAnimTime = 0.0f;
+
+	/** How far off-screen right the panel starts/ends (pixels). */
+	UPROPERTY(EditAnywhere, Category = "ROS|UI")
+	float PanelHiddenOffsetX = 500.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ROS|UI")
+	float PanelSlideSeconds = 0.4f;
+
+	/** Root container that actually slides. Bind to the panel's outermost box. */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<class UWidget> PanelRoot;
+
+	void TickPanelAnim(float DeltaTime);
 };
