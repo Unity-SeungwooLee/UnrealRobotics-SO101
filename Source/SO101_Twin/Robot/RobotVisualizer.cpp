@@ -208,6 +208,12 @@ void ARobotVisualizer::BeginPlay()
 		SMC->SetCollisionResponseToAllChannels(ECR_Ignore);
 		SMC->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 		SMC->OnClicked.AddDynamic(this, &ARobotVisualizer::OnRobotMeshClicked);
+		// Hover outline: tag with the stencil ID now, but keep custom depth
+		// OFF until the cursor actually enters (Phase 11).
+		SMC->SetCustomDepthStencilValue(OutlineStencilValue);
+		SMC->SetRenderCustomDepth(false);
+		SMC->OnBeginCursorOver.AddDynamic(this, &ARobotVisualizer::OnRobotMeshBeginCursorOver);
+		SMC->OnEndCursorOver.AddDynamic(this, &ARobotVisualizer::OnRobotMeshEndCursorOver);
 		SMC->AttachToComponent(Parent, FAttachmentTransformRules::KeepRelativeTransform);
 		SMC->RegisterComponent();
 		AllMeshComponents.Add(SMC);
@@ -698,6 +704,11 @@ void ARobotVisualizer::ParseAndApplyJointStates(const FString& MessageJson)
 		{
 			const float AngleDeg = RosCoordConv::RosJointAngleToUeDegrees(AngleRad);
 
+			// Visual-only cosmetic offset (#28). Rendered pose ONLY —
+			// CurrentJointDeg (cached above) stays the true robot value,
+			// so monitor UI / limits / warnings / history are unaffected.
+			const float VisualDeg = AngleDeg + GetVisualOffsetDeg(JointName);
+
 			FRotator BaseRot;
 			if (JointName == FName("shoulder_pan"))
 				BaseRot = RosCoordConv::RosRpyToUeRotator(3.14159, 0.0, -3.14159);
@@ -713,13 +724,24 @@ void ARobotVisualizer::ParseAndApplyJointStates(const FString& MessageJson)
 				BaseRot = RosCoordConv::RosRpyToUeRotator(1.5708, 0.0, 0.0);
 
 			const FQuat BaseQuat = BaseRot.Quaternion();
-			const FQuat JointQuat = FQuat(FVector::UpVector, FMath::DegreesToRadians(AngleDeg));
+			const FQuat JointQuat = FQuat(FVector::UpVector, FMath::DegreesToRadians(VisualDeg));
 			const FQuat FinalQuat = BaseQuat * JointQuat;
 
 			(*JointComp)->SetRelativeRotation(FinalQuat.Rotator());
 		}
 	}
 	RecordJointHistory();
+}
+
+float ARobotVisualizer::GetVisualOffsetDeg(FName JointName) const
+{
+	if (JointName == FName("shoulder_pan"))  return VisOffsetShoulderPanDeg;
+	if (JointName == FName("shoulder_lift")) return VisOffsetShoulderLiftDeg;
+	if (JointName == FName("elbow_flex"))    return VisOffsetElbowFlexDeg;
+	if (JointName == FName("wrist_flex"))    return VisOffsetWristFlexDeg;
+	if (JointName == FName("wrist_roll"))    return VisOffsetWristRollDeg;
+	if (JointName == FName("gripper"))       return VisOffsetGripperDeg;
+	return 0.0f;
 }
 
 // =============================================================================
@@ -1232,6 +1254,45 @@ void ARobotVisualizer::OnAnyClickPressed()
 	}
 	HideControlWidget();
 	bRobotClickedThisFrame = false;
+}
+
+// =============================================================================
+// Hover outline (Phase 11)
+// =============================================================================
+
+void ARobotVisualizer::OnRobotMeshBeginCursorOver(UPrimitiveComponent* Comp)
+{
+	if (!Comp) { return; }
+	HoveredMeshes.Add(Comp);
+	SetOutlineActive(true);
+}
+
+void ARobotVisualizer::OnRobotMeshEndCursorOver(UPrimitiveComponent* Comp)
+{
+	if (Comp) { HoveredMeshes.Remove(Comp); }
+
+	// Prune anything destroyed since it was added.
+	for (auto It = HoveredMeshes.CreateIterator(); It; ++It)
+	{
+		if (!It->IsValid()) { It.RemoveCurrent(); }
+	}
+
+	SetOutlineActive(HoveredMeshes.Num() > 0);
+}
+
+void ARobotVisualizer::SetOutlineActive(bool bActive)
+{
+	const bool bWanted = bActive && bHoverOutlineEnabled;
+	if (bWanted == bOutlineActive) { return; }
+	bOutlineActive = bWanted;
+
+	for (UStaticMeshComponent* SMC : AllMeshComponents)
+	{
+		if (SMC) { SMC->SetRenderCustomDepth(bWanted); }
+	}
+
+	UE_LOG(LogRosBridge, Log, TEXT("RobotVisualizer: hover outline %s"),
+		bWanted ? TEXT("ON") : TEXT("OFF"));
 }
 
 void ARobotVisualizer::ShowControlWidget()

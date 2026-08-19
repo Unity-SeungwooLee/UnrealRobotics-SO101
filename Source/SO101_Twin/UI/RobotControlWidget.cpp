@@ -12,6 +12,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/CheckBox.h"
 #include "Components/SpinBox.h"
+#include "Components/Image.h"
 
 #include "Components/ListView.h"
 #include "Components/ComboBoxString.h"
@@ -135,67 +136,29 @@ void URobotControlWidget::HandleEStopClicked()
 	CmdEStop();
 }
 
+void URobotControlWidget::SetDot(UImage* Dot, bool bOk)
+{
+	if (!Dot) { return; }
+	static const FLinearColor Green(0.15f, 0.85f, 0.25f);
+	static const FLinearColor Red(0.90f, 0.15f, 0.15f);
+	Dot->SetColorAndOpacity(bOk ? Green : Red);
+}
+
 void URobotControlWidget::RefreshSafetyUI()
 {
-	// --- Connection status text + color (priority order) ---
-	if (ConnectionStatusText)
-	{
-		FString StatusStr;
-		FLinearColor Color;
+	// --- Connection chain: Unreal -> rosbridge -> bridge_node -> worker ---
+	const bool bBridge = IsRosBridgeConnected();
+	const bool bNode = IsBridgeNodeAlive();
+	const bool bWorker = IsWorkerAlive();
 
-		if (!IsRosBridgeConnected())
-		{
-			StatusStr = TEXT("DISCONNECTED");
-			Color = FLinearColor::Red;
-		}
-		else if (!IsBridgeNodeAlive())
-		{
-			StatusStr = TEXT("Bridge node: DOWN");
-			Color = FLinearColor::Red;
-		}
-		else if (!IsWorkerAlive())
-		{
-			StatusStr = TEXT("Worker: DOWN");
-			Color = FLinearColor(1.0f, 0.5f, 0.0f); // orange
-		}
-		else
-		{
-			const FString WS = GetWorkerState();
-			// WorkerState may still hold a stale connection-layer string
-			// ("disconnected", "bridge lost", "worker lost", "unknown") until
-			// the worker sends its first real /robot_status. Filter those out.
-			const bool bRealState =
-				(WS == TEXT("idle") || WS == TEXT("syncing") ||
-					WS == TEXT("recording") || WS == TEXT("replaying"));
+	SetDot(BridgeDot, bBridge);
+	SetDot(NodeDot, bNode);
+	SetDot(WorkerDot, bWorker);
 
-			StatusStr = bRealState
-				? FString::Printf(TEXT("Connected  |  %s"), *WS)
-				: TEXT("Connected  |  (awaiting status)");
-			Color = FLinearColor::Green;
-		}
-
-		ConnectionStatusText->SetText(FText::FromString(StatusStr));
-		ConnectionStatusText->SetColorAndOpacity(FSlateColor(Color));
-	}
-
-	// --- Device error panel (hidden when no errors) ---
-	if (DeviceErrorText)
-	{
-		TArray<FString> Errors;
-		if (HasFollowerError()) { Errors.Add(TEXT("Follower: USB/Serial ERROR")); }
-		if (HasLeaderError()) { Errors.Add(TEXT("Leader: USB/Serial ERROR")); }
-
-		if (Errors.Num() > 0)
-		{
-			DeviceErrorText->SetText(FText::FromString(FString::Join(Errors, TEXT("\n"))));
-			DeviceErrorText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
-			DeviceErrorText->SetVisibility(ESlateVisibility::HitTestInvisible);
-		}
-		else
-		{
-			DeviceErrorText->SetVisibility(ESlateVisibility::Collapsed);
-		}
-	}
+	// --- Device (USB) health. Only trustworthy while the worker is alive:
+	// if the worker is down the error flags are stale, so show both as faulted.
+	SetDot(FollowerDot, bWorker && !HasFollowerError());
+	SetDot(LeaderDot, bWorker && !HasLeaderError());
 }
 
 void URobotControlWidget::HandleSyncOnClicked() { CmdSyncOn(); }
@@ -331,13 +294,16 @@ void URobotControlWidget::RefreshReplayProgress()
 		if (bReplaying && R)
 		{
 			const FString T = R->IsReplayApproaching()
-				? TEXT("approaching...")
+				? TEXT("approaching")
 				: FString::Printf(TEXT("%d / %d"), R->GetReplayIndex(), R->GetReplayTotal());
 			ReplayProgressText->SetText(FText::FromString(T));
+			ReplayProgressText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 		}
 		else
 		{
-			ReplayProgressText->SetText(FText::GetEmpty());
+			// Idle placeholder — dimmed so it reads as "no data" not "0 frames".
+			ReplayProgressText->SetText(FText::FromString(TEXT("00 / 00")));
+			ReplayProgressText->SetColorAndOpacity(FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.35f)));
 		}
 	}
 }

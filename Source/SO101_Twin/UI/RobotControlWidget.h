@@ -114,11 +114,15 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<class UButton> EStopButton;
 
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<class UTextBlock> ConnectionStatusText;
+	// --- Status dots (green = OK, red = fault) ---
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<class UImage> BridgeDot;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<class UImage> NodeDot;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<class UImage> WorkerDot;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<class UImage> FollowerDot;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<class UImage> LeaderDot;
 
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<class UTextBlock> DeviceErrorText;
+	/** Tint one dot green (ok) or red (fault). */
+	static void SetDot(class UImage* Dot, bool bOk);
 
 	float RefreshAccum = 0.0f;
 

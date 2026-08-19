@@ -40,8 +40,9 @@ int32 UJointGraphWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Al
 	}
 
 	const FVector2D Size = AllottedGeometry.GetLocalSize();
-	const float LegendW = 90.0f;                 // left column for the legend
-	const float PadL = LegendW + 6.0f, PadR = 6.0f, PadT = 6.0f, PadB = 6.0f;
+	const float LegendW = 110.0f;                 // left column for the legend
+	const float LegendGap = 16.0f;               // breathing room before the plot
+	const float PadL = LegendW + LegendGap, PadR = 6.0f, PadT = 6.0f, PadB = 6.0f;
 	const float W = static_cast<float>(Size.X) - PadL - PadR;
 	const float H = static_cast<float>(Size.Y) - PadT - PadB;
 	if (W <= 8.0f || H <= 8.0f)

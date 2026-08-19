@@ -196,6 +196,44 @@ protected:
 	bool bShowOnScreenDebug = false;
 
 	// =================================================================
+	// Visual-only joint offsets (cosmetic alignment, Appendix A #28)
+	// =================================================================
+	// Purely cosmetic nudge applied to the RENDERED joint rotation only.
+	// Does NOT touch CurrentJointDeg, the monitor UI, joint limits, warnings,
+	// or history — those all read the real robot value cached before this.
+	// Units: UE degrees, added to the joint's local-Z rotation.
+	// Tune live in the Details panel against the real arm; 0 = 1:1 match.
+	UPROPERTY(EditAnywhere, Category = "Robot|VisualOffset")
+	float VisOffsetShoulderPanDeg = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Robot|VisualOffset")
+	float VisOffsetShoulderLiftDeg = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Robot|VisualOffset")
+	float VisOffsetElbowFlexDeg = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Robot|VisualOffset")
+	float VisOffsetWristFlexDeg = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Robot|VisualOffset")
+	float VisOffsetWristRollDeg = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Robot|VisualOffset")
+	float VisOffsetGripperDeg = 0.0f;
+
+	// =================================================================
+	// Hover outline highlight (Phase 11)
+	// =================================================================
+
+	/** Master switch for the hover highlight. Off = never renders custom depth. */
+	UPROPERTY(EditAnywhere, Category = "Robot|Outline")
+	bool bHoverOutlineEnabled = true;
+
+	/** Stencil ID the post-process outline material matches against. */
+	UPROPERTY(EditAnywhere, Category = "Robot|Outline", meta = (ClampMin = "1", ClampMax = "255"))
+	int32 OutlineStencilValue = 1;
+
+	// =================================================================
 	// MoveIt Command Interface (Phase 8)
 	// =================================================================
 
@@ -377,6 +415,23 @@ private:
 	UFUNCTION()
 	void OnAnyClickPressed();
 
+	/** Mouse entered / left one of the robot meshes. */
+	UFUNCTION()
+	void OnRobotMeshBeginCursorOver(UPrimitiveComponent* Comp);
+
+	UFUNCTION()
+	void OnRobotMeshEndCursorOver(UPrimitiveComponent* Comp);
+
+	/** Toggle custom-depth rendering on every robot mesh at once. */
+	void SetOutlineActive(bool bActive);
+
+	/** Meshes currently under the cursor. The arm is split into many meshes,
+	 *  so we count them instead of using a bool — otherwise the highlight
+	 *  flickers as the cursor crosses from one mesh to the next. */
+	TSet<TWeakObjectPtr<UPrimitiveComponent>> HoveredMeshes;
+
+	bool bOutlineActive = false;
+
 	void ShowControlWidget();
 	void HideControlWidget();
 
@@ -394,6 +449,9 @@ private:
 	bool bRosBridgeConnected = false;
 
 	void ParseAndApplyJointStates(const FString& MessageJson);
+
+	/** Visual-only cosmetic offset (UE degrees) for the given joint. #28. */
+	float GetVisualOffsetDeg(FName JointName) const;
 
 	// =================================================================
 	// MoveIt publish helpers
