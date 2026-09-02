@@ -3,7 +3,7 @@
 Unreal Engine 5.4 기반 **SO-ARM-101 로봇 디지털 트윈** 클라이언트.  
 실물 로봇 ↔ Unreal 양방향 Sim-to-Real 디지털 트윈 (개인 프로젝트)
 
-https://github.com/user-attachments/assets/41278562-b763-4921-953c-f5606dfdc79b
+https://youtu.be/5SgQyp8pRQo?si=89BlJXi7dxROkNgM
 
 Stack: ROS2 Humble · MoveIt 2 · Unreal Engine 5.4.4 (C++ / UMG) · LeRobot · ZeroMQ · rosbridge · WSL2/Ubuntu
 
@@ -17,8 +17,6 @@ Stack: ROS2 Humble · MoveIt 2 · Unreal Engine 5.4.4 (C++ / UMG) · LeRobot · 
 - **3D 에셋·좌표계 파이프라인**: URDF 메시(STL)를 Blender로 정리·FBX 변환, 7링크 6조인트를 Unreal SceneComponent 계층으로 구축. UE(cm·좌수계) ↔ ROS(m·우수계) 좌표·쿼터니언 변환 헬퍼 작성.
 
 https://github.com/user-attachments/assets/0654abef-e979-4af7-bcd8-5db0cd8ebf9b
-
-https://github.com/user-attachments/assets/ee9b3665-4707-4325-a5c6-124dd7ed0e11
 
 ---
 
