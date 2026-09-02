@@ -3,7 +3,13 @@
 Unreal Engine 5.4 기반 **SO-ARM-101 로봇 디지털 트윈** 클라이언트.  
 실물 로봇 ↔ Unreal 양방향 Sim-to-Real 디지털 트윈 (개인 프로젝트)
 
-https://youtu.be/5SgQyp8pRQo?si=89BlJXi7dxROkNgM
+<p align="center">
+  <a href="https://youtu.be/5SgQyp8pRQo">
+    <img src="docs/demo-thumbnail.jpg" alt="SO-ARM-101 디지털 트윈 데모 영상 — 클릭하면 YouTube에서 재생됩니다" width="820">
+  </a>
+  <br>
+  <a href="https://youtu.be/5SgQyp8pRQo"><b>▶ 데모 영상 보기 (YouTube)</b></a>
+</p>
 
 Stack: ROS2 Humble · MoveIt 2 · Unreal Engine 5.4.4 (C++ / UMG) · LeRobot · ZeroMQ · rosbridge · WSL2/Ubuntu
 
