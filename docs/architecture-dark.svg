@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-label="SO-ARM-101 digital twin architecture">
+  <style>
+  .bg{fill:#0d1117}
+  .panel{fill:#161b22;stroke:#30363d;stroke-width:1.5}
+  .sub{fill:#0d1117;stroke:#30363d;stroke-width:1.5}
+  .card{fill:#161b22;stroke:#30363d;stroke-width:1.5}
+  text{font-family:ui-sans-serif,-apple-system,'Segoe UI','Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif;fill:#e6edf3}
+  .badge{font-size:13px;font-weight:700;letter-spacing:.02em}
+  .grp{font-size:13.5px;font-weight:700}
+  .t{font-size:13.5px;font-weight:700}
+  .s{font-size:10.5px;fill:#9198a1}
+  .b{font-size:11px;fill:#e6edf3}
+  .m{font-family:ui-monospace,SFMono-Regular,'Cascadia Mono',Consolas,'Courier New',monospace;font-size:10.5px;fill:#9198a1}
+  .lbl{font-size:10.5px;fill:#9198a1}
+  .hd{font-size:11px;font-weight:700}
+  .blue{fill:#58a6ff} .green{fill:#3fb950} .purple{fill:#a371f7}
+  .cyan{fill:#56d4dd} .orange{fill:#f0883e} .gray{fill:#8b949e}
+  .ln{stroke:#6e7681;stroke-width:1.6;fill:none}
+  .lnf{fill:#6e7681}
+  </style>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="lnf"/>
+    </marker>
+    <marker id="al" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="lnf"/>
+    </marker>
+    <marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="lnf"/>
+    </marker>
+    <marker id="au" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="lnf"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="700" class="bg"/>
+  <rect x="20" y="20" width="470" height="640" rx="14" class="panel"/>
+  <text x="40" y="46" class="badge">Windows 11</text>
+  <rect x="40" y="62" width="430" height="578" rx="12" class="sub"/>
+  <text x="56" y="86" class="grp">Unreal Engine 5.4.4 · SO101_Twin</text>
+  <rect x="56" y="100" width="398" height="152" rx="9" class="card"/>
+  <rect x="57" y="112" width="3" height="128" rx="1.5" class="blue"/>
+  <text x="72" y="126" class="t">URosBridgeSubsystem</text>
+  <text x="72" y="144" class="s">GameInstanceSubsystem · WebSocket 단독 소유</text>
+  <text x="72" y="168" class="b">· Subscribe / Advertise / Publish</text>
+  <text x="72" y="187" class="b">· 자동 재접속 (지수 백오프 1s → 30s)</text>
+  <text x="72" y="206" class="b">· 재접속 시 구독 · 광고 목록 복원</text>
+  <text x="72" y="225" class="b">· fragment 메시지 재조립</text>
+  <rect x="56" y="272" width="398" height="178" rx="9" class="card"/>
+  <rect x="57" y="284" width="3" height="154" rx="1.5" class="purple"/>
+  <text x="72" y="298" class="t">ARobotVisualizer</text>
+  <text x="72" y="316" class="s">URDF 관절 시각화 · 로봇 상태 단일 소유</text>
+  <text x="72" y="340" class="b">· /joint_states → 7링크 6조인트 적용</text>
+  <text x="72" y="359" class="b">· MoveIt 목표 publish (named / joint / pose)</text>
+  <text x="72" y="378" class="b">· 녹화 · 재생 · E-Stop</text>
+  <text x="72" y="397" class="b">· heartbeat 기반 연결 헬스 모니터링</text>
+  <text x="72" y="416" class="b">· 관절 이력 링버퍼 (300 샘플 ≈ 10초)</text>
+  <rect x="56" y="470" width="398" height="150" rx="9" class="card"/>
+  <rect x="57" y="482" width="3" height="126" rx="1.5" class="cyan"/>
+  <text x="72" y="496" class="t">URobotControlWidget (UMG)</text>
+  <text x="72" y="514" class="s">C++ 로직 + WBP 레이아웃 하이브리드</text>
+  <text x="72" y="538" class="b">· 연결 상태 점 5개 · 조작 버튼 · E-Stop</text>
+  <text x="72" y="557" class="b">· 관절 한계 모니터 · 이력 그래프</text>
+  <text x="72" y="576" class="b">· 녹화 목록 · 재생 진행률 · 토스트</text>
+  <text x="595" y="192" class="hd blue" text-anchor="middle">WebSocket</text>
+  <text x="595" y="211" class="m" text-anchor="middle">ws://127.0.0.1:9090/?x=1</text>
+  <line x1="502" y1="236" x2="688" y2="236" class="ln" marker-start="url(#al)" marker-end="url(#ar)"/>
+  <text x="522" y="296" class="hd green">ROS → UE</text>
+  <text x="522" y="318" class="m">/joint_states  30 Hz</text>
+  <text x="522" y="336" class="m">/robot_status</text>
+  <text x="522" y="354" class="m">/bridge_heartbeat  1 Hz</text>
+  <text x="522" y="402" class="hd blue">UE → ROS</text>
+  <text x="522" y="424" class="m">/robot_command</text>
+  <text x="522" y="442" class="m">/moveit_goal_named</text>
+  <text x="522" y="460" class="m">/moveit_goal_joints</text>
+  <text x="522" y="478" class="m">/moveit_goal_pose</text>
+  <rect x="700" y="20" width="480" height="510" rx="14" class="panel"/>
+  <text x="720" y="46" class="badge">WSL2 · Ubuntu-22.04</text>
+  <text x="720" y="64" class="s">ROS2 humble + CycloneDDS</text>
+  <rect x="720" y="84" width="440" height="54" rx="9" class="card"/>
+  <rect x="721" y="96" width="3" height="30" rx="1.5" class="blue"/>
+  <text x="736" y="110" class="t">rosbridge_websocket</text>
+  <text x="736" y="128" class="s">port 9090 · rosbridge v2 JSON</text>
+  <line x1="744" y1="144" x2="744" y2="170" class="ln" marker-start="url(#au)" marker-end="url(#ad)"/>
+  <text x="758" y="161" class="lbl">ROS2 토픽 · CycloneDDS</text>
+  <rect x="720" y="176" width="440" height="92" rx="9" class="card"/>
+  <rect x="721" y="188" width="3" height="68" rx="1.5" class="green"/>
+  <text x="736" y="202" class="t">bridge_node</text>
+  <text x="736" y="220" class="s">ROS2 ↔ worker 릴레이 (rclpy, Py3.10)</text>
+  <text x="736" y="244" class="b">· 명령 중계 · 상태 취합 · heartbeat 발행</text>
+  <text x="736" y="263" class="b">· 녹화 목록 분할 발행 · 재생 진행률 5 Hz</text>
+  <line x1="744" y1="274" x2="744" y2="300" class="ln" marker-start="url(#au)" marker-end="url(#ad)"/>
+  <text x="758" y="291" class="lbl">ZeroMQ IPC</text>
+  <rect x="720" y="306" width="440" height="112" rx="9" class="card"/>
+  <rect x="721" y="318" width="3" height="88" rx="1.5" class="green"/>
+  <text x="736" y="332" class="t">lerobot_worker.py</text>
+  <text x="736" y="350" class="s">conda: lerobot (Py3.12) · ABI 격리용 별도 프로세스</text>
+  <text x="736" y="374" class="b">· leader → follower 텔레오프</text>
+  <text x="736" y="393" class="b">· 궤적 녹화 / 재생 (cosine ease-in-out)</text>
+  <text x="736" y="412" class="b">· 이중 관절 클램핑 · 관절 한계 보고</text>
+  <rect x="720" y="436" width="212" height="62" rx="9" class="card"/>
+  <rect x="721" y="448" width="3" height="38" rx="1.5" class="gray"/>
+  <text x="736" y="462" class="t">robot_state_publisher</text>
+  <text x="736" y="480" class="s">옵션 · RViz 표시용</text>
+  <rect x="948" y="436" width="212" height="62" rx="9" class="card"/>
+  <rect x="949" y="448" width="3" height="38" rx="1.5" class="gray"/>
+  <text x="964" y="462" class="t">MoveIt 2 스택</text>
+  <text x="964" y="480" class="s">옵션 · 플래닝 + Action server</text>
+  <line x1="940" y1="534" x2="940" y2="586" class="ln" marker-start="url(#au)" marker-end="url(#ad)"/>
+  <text x="954" y="566" class="lbl">USB serial · usbipd-win</text>
+  <rect x="760" y="590" width="360" height="70" rx="9" class="card"/>
+  <rect x="761" y="602" width="3" height="46" rx="1.5" class="orange"/>
+  <text x="776" y="618" class="t">SO-ARM-101 (실물)</text>
+  <text x="776" y="638" class="s">leader + follower · 6축 서보 암 · /dev/ttyACM*</text>
+</svg>

@@ -24,27 +24,12 @@ https://github.com/user-attachments/assets/ee9b3665-4707-4325-a5c6-124dd7ed0e11
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────┐     WebSocket ws://127.0.0.1:9090/?x=1
-│  Windows 11                                  │ ◄──────────────────────────────────────►
-│                                              │
-│  Unreal Engine 5.4.4  (SO101_Twin)           │     ┌─────────────────────────────────────┐
-│  · URosBridgeSubsystem  (WebSocket 소유)      │     │  WSL2 (Ubuntu-22.04)                │
-│    - Subscribe / Advertise / Publish         │     │  ROS2 humble + CycloneDDS           │
-│    - 자동 재접속 (지수 백오프 1s→30s)          │     │                                     │
-│    - 재접속 시 구독·광고 자동 복원             │     │  1. lerobot_worker.py               │
-│    - fragment 메시지 재조립                   │     │     leader/follower 텔레오프         │
-│  · ARobotVisualizer  (URDF 관절 시각화)       │     │  2. bridge_node  (ROS2 ↔ worker)    │
-│    - /joint_states 구독 → 관절 각도 적용      │     │  3. rosbridge_websocket :9090        │
-│    - MoveIt 명령 publish (named/joint/pose)  │     │  4. robot_state_publisher  (옵션)    │
-│    - 녹화 / 재생 / 긴급 정지 제어             │     │  5. MoveIt 스택  (옵션)              │
-│    - 연결 헬스 모니터링 (브리지·워커 heartbeat)│     └─────────────────────────────────────┘
-│    - 관절 이력 링버퍼(300샘플) + 클릭 인터랙션 │
-│  · URobotControlWidget  (뷰포트 UMG UI)       │
-│    - 상태 점 / 조작 버튼 / 관절 모니터·그래프  │
-│    - 녹화 목록, 재생 진행률, 토스트 알림       │
-└──────────────────────────────────────────────┘
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
+    <img src="docs/architecture-light.svg" alt="SO-ARM-101 디지털 트윈 아키텍처" width="100%">
+  </picture>
+</p>
 
 ### 데이터 흐름
 
